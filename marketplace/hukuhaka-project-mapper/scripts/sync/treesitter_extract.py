@@ -53,6 +53,9 @@ EXT_TO_LANG = {
 }
 
 _QUERY_CACHE: dict[str, object] = {}
+# Languages whose query compiled on neither API — surfaced by skeleton.py's
+# degradation notice so silent quality loss is visible.
+QUERY_LOAD_FAILURES: set[str] = set()
 
 
 def _load_query(lang: str, qname: str):
@@ -62,10 +65,19 @@ def _load_query(lang: str, qname: str):
     query = None
     path = QUERY_DIR / f"{qname}-tags.scm"
     if path.is_file():
+        src = path.read_text(encoding="utf-8")
         try:
-            query = get_language(lang).query(path.read_text(encoding="utf-8"))
+            # Preferred since 0.25: Query() constructor (Language.query is
+            # deprecated there and slated for removal).
+            from tree_sitter import Query
+            query = Query(get_language(lang), src)
         except Exception:
-            query = None
+            try:
+                query = get_language(lang).query(src)  # <= 0.24 API
+            except Exception:
+                query = None
+        if query is None:
+            QUERY_LOAD_FAILURES.add(lang)
     _QUERY_CACHE[lang] = query
     return query
 
@@ -114,8 +126,9 @@ def extract(rel: str, text: str) -> dict | None:
     query = _load_query(lang, qname)
     if query is None:
         return None
+    data = text.encode("utf-8")
     try:
-        tree = get_parser(lang).parse(text.encode("utf-8"))
+        tree = get_parser(lang).parse(data)
     except Exception:
         return None
 
@@ -134,7 +147,8 @@ def extract(rel: str, text: str) -> dict | None:
             seen_rows.add(row)
             first = " ".join(lines[row].split())[:MAX_SYMBOL_LEN]
             found.append((row, ("  " if kind == "method" else "") + first))
-            name = text[node.start_byte:node.end_byte]
+            # node offsets are byte offsets into the UTF-8 encoding, not str indices
+            name = data[node.start_byte:node.end_byte].decode("utf-8", "replace")
             if kind == "function" and name == "main":
                 entry_reasons.append("main function")
     found.sort()

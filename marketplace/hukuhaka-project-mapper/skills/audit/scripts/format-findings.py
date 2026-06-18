@@ -35,8 +35,12 @@ def main() -> int:
 
     by_pri: dict[str, list] = {"high": [], "medium": [], "low": []}
     for f in findings:
+        if not isinstance(f, dict):
+            print(f"ERROR: malformed finding (expected object): {f!r}", file=sys.stderr)
+            return 1
         p = (f.get("priority") or "low").lower()
         if p not in by_pri:
+            print(f"WARNING: unknown priority {p!r} — treated as low", file=sys.stderr)
             p = "low"
         by_pri[p].append(f)
 
@@ -46,7 +50,8 @@ def main() -> int:
         items = by_pri[key]
         if not items:
             continue
-        print(f"### {label} ({len(items)} items)")
+        n = len(items)
+        print(f"### {label} ({n} item{'s' if n != 1 else ''})")
         for f in items:
             files_field = f.get("files_affected") or f.get("file") or []
             if isinstance(files_field, list):

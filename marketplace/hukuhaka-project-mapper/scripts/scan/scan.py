@@ -70,7 +70,8 @@ def list_tracked_dirs(root: Path) -> list[Path] | None:
     Deny dirs are added separately via find_deny_dirs."""
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-co", "--exclude-standard"],
+            ["git", "-C", str(root), "-c", "core.quotepath=false",
+             "ls-files", "-co", "--exclude-standard"],
             capture_output=True, text=True, check=True, timeout=30,
         )
     except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
@@ -173,14 +174,26 @@ def classify(d: Path) -> tuple[str, str, str]:
         suffix = "subdir" if len(children) == 1 else "subdirs"
         return ("BRANCH", "scatter", f"{len(children)} {suffix}")
     if own >= 2 and len(children) == 0:
-        suffix = "source file" if own == 1 else "source files"
-        return ("LEAF", "scatter", f"{own} {suffix}")
+        return ("LEAF", "scatter", f"{own} source files")
     return ("TRIVIAL", "skip", "trivial")
 
 
 # ─── Output ──────────────────────────────────────────────────────────
 
 PLACEHOLDER = "# {name}\n\n<!-- managed by map-sync -->\n"
+
+OVERRIDES_MARKER = "<!-- user-overrides below -->"
+
+
+def preserve_overrides(scan_md: Path, new_content: str) -> str:
+    """Carry the user-overrides tail of an existing scan.md into new content."""
+    if scan_md.exists():
+        old = scan_md.read_text(encoding="utf-8")
+        if OVERRIDES_MARKER in old:
+            tail = old.split(OVERRIDES_MARKER, 1)[1]
+            head = new_content.split(OVERRIDES_MARKER, 1)[0]
+            return head + OVERRIDES_MARKER + tail
+    return new_content
 
 
 def render_scan_md(rows: list[dict], root: Path, source: str) -> str:
@@ -209,7 +222,7 @@ def render_scan_md(rows: list[dict], root: Path, source: str) -> str:
             )
     lines.extend([
         "",
-        "<!-- user-overrides below -->",
+        OVERRIDES_MARKER,
         "",
     ])
     return "\n".join(lines)
@@ -252,7 +265,8 @@ def main(argv: list[str]) -> int:
         rows.append({"path": d, "rule": rule, "decision": decision, "note": note})
 
     scan_md = claude_dir / "scan.md"
-    scan_md.write_text(render_scan_md(rows, root, source), encoding="utf-8")
+    content = preserve_overrides(scan_md, render_scan_md(rows, root, source))
+    scan_md.write_text(content, encoding="utf-8")
 
     created = 0
     skipped = 0

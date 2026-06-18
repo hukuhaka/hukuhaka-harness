@@ -4,7 +4,7 @@
 
 ## Entry Points
 
-(To be filled by `/hukuhaka-project-mapper:map sync`.)
+(To be filled by `/hukuhaka-project-mapper:map-sync`.)
 
 ## Data Flow
 

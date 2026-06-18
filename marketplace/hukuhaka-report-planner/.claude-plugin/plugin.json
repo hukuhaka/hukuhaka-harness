@@ -1,0 +1,16 @@
+{
+  "name": "hukuhaka-report-planner",
+  "version": "0.2.0",
+  "description": "Report planner — looks at the material, proposes the concrete figures it needs + a section/tab outline, captures the user's levers (purpose, audience, prose level, design direction), and records the plan to spec.md. Plans, does not build; building is a separate unconstrained step.",
+  "author": {
+    "name": "hukuhaka"
+  },
+  "keywords": [
+    "report",
+    "planning",
+    "outline",
+    "figures",
+    "spec",
+    "hukuhaka-report-planner"
+  ]
+}

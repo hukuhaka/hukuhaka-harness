@@ -48,7 +48,10 @@ except ImportError:
 SYMBOL_EXT = {".py", ".sh", ".bash", ".md", ".json"}
 ENTRY_NAMES = {"main", "app", "cli", "run", "server", "index", "__main__"}
 TODO_RE = re.compile(r"(TODO|FIXME)[:\s](.{0,120})")
-SH_FUNC_RE = re.compile(r"^\s*(?:function\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*\(\)\s*\{?\s*$")
+SH_FUNC_RE = re.compile(  # `name()`, `function name()`, or paren-less `function name {`
+    r"^\s*(?=function\s|[A-Za-z_][A-Za-z0-9_-]*\s*\(\))"
+    r"(?:function\s+)?([A-Za-z_][A-Za-z0-9_-]*)\s*(?:\(\))?\s*\{?\s*$"
+)
 SH_SOURCE_RE = re.compile(r"^\s*(?:source|\.)\s+([^\s;]+)")
 MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)#][^)]*)\)")
 GENERIC_DEF_RE = re.compile(
@@ -147,7 +150,8 @@ def list_files(root: Path) -> list[str]:
     files: list[str] = []
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "ls-files", "-co", "--exclude-standard"],
+            ["git", "-C", str(root), "-c", "core.quotepath=false",
+             "ls-files", "-co", "--exclude-standard"],
             capture_output=True, text=True, check=True, timeout=30,
         )
         files = [l for l in result.stdout.splitlines() if l.strip()]
@@ -830,6 +834,11 @@ def build_skeleton(root: Path) -> dict:
             print(f"skeleton: tree-sitter unavailable — {degraded} source "
                   "file(s) degraded to generic regex (pip install "
                   "tree-sitter-language-pack to enable)", file=sys.stderr)
+    elif getattr(treesitter_extract, "QUERY_LOAD_FAILURES", None):
+        langs = ", ".join(sorted(treesitter_extract.QUERY_LOAD_FAILURES))
+        print(f"skeleton: tree-sitter query load failed for: {langs} — "
+              "affected files degraded to generic regex (py-tree-sitter "
+              "version mismatch?)", file=sys.stderr)
 
     merge_decl_def(extracted)
     edges = resolve_imports(extracted, root)
@@ -940,7 +949,12 @@ def main(argv: list[str]) -> int:
     root = Path(args[0] if args else os.getcwd()).resolve()
 
     if scatter_dir is not None:
-        print(scatter_extract(root, scatter_dir))
+        out = scatter_extract(root, scatter_dir)
+        if out.startswith("ERROR:"):
+            # stderr + nonzero so the error never flows into agent input
+            print(out, file=sys.stderr)
+            return 1
+        print(out)
         return 0
 
     claude_dir = root / ".claude"

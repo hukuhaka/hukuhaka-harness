@@ -6,6 +6,39 @@ All notable changes to hukuhaka-claude are documented here. The project follows
 Plugin versions (`marketplace/<plugin>/.claude-plugin/plugin.json`) are
 independent — see those files for their own history.
 
+## [1.0.8] — 2026-06-18
+
+### Changed
+
+- **`hukuhaka-report-builder` rescoped and renamed to `hukuhaka-report-planner`**
+  (`hukuhaka-report-planner@0.2.0`). The plugin now **plans** a report instead
+  of building it: it looks at the material, proposes the concrete figures it
+  needs (timing diagram, diff table, KPI strip, chart, hand-authored diagram)
+  and a section/tab outline, captures the user's levers (purpose, audience,
+  prose level, design direction), and records the plan to `spec.md`. Building
+  the HTML is now a separate, unconstrained step the user runs afterward (e.g.
+  hand the plan to a design skill). The old multi-stage build pipeline
+  (`0-intake` through `5-assemble`) and its lint/validate scripts are removed in
+  favor of a two-stage plan flow (`0-frame`, `1-plan`) plus a `craft/` reference
+  set (typography, spacing, color, charts, diagrams, tables, KPI tiles,
+  callouts, code blocks, cover) and a `spec-schema.md`.
+
+### Fixed
+
+- **`hukuhaka-project-mapper@1.1.2`** — a sweep of behavior fixes from a full
+  plugin review:
+  - the sync-cost hook now matches multi-line `record-sync` triggers it
+    previously missed
+  - `map-init` honors `--force` and skips existing files; `map-clean` is
+    marker-based; `map-scan` preserves overrides; `spec.md` is seeded on init
+  - `allowed-tools` declared for `map-init`, `map-clean`, `map-compact`
+  - analyzer legacy mode removed; root guard and stale-scatter skip added
+  - 14 further documentation / contract / edge-case corrections (trace is
+    read-only, marker-based placeholder detection, full-sync on diff failure,
+    live-only duplicate scan)
+- **`hukuhaka-report-planner`** — figure-type accuracy and `validate`
+  file-descriptor fixes from verification follow-ups.
+
 ## [1.0.7] — 2026-06-10
 
 ### Added

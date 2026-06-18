@@ -19,7 +19,7 @@ Expects structured JSON from analyzer with: `stats`, `entry_points`, `data_flow`
 |------|---------|--------|
 | map.md | Entry points, data flow, structure. If `depends_on` exists, append ` -> name1, name2` after description; omit `->` when empty/absent | <100 lines |
 | design.md | Stack, patterns, decisions | <100 lines |
-| backlog.md | Planned (preserve), In Progress (preserve), TODOs (rescan) | <80 lines |
+| backlog.md | Planned (preserve), In Progress (preserve), TODOs (rebuild from input JSON `todos`) | <80 lines |
 | changelog.md | Recent (10 max) + Archive. Every sync APPENDS one dated entry to Recent describing this sync (e.g., `- [YYYY-MM-DD] Docs synced: N entry points, M components, K TODOs`) — Recent must never be left empty after a sync | <50 entries |
 
 ## Completion Report
@@ -54,14 +54,10 @@ When prompt starts with `scatter:`, generate folder CLAUDE.md from scatter JSON,
 ## See Also
 
 [{child}/]({child}/): 1-sentence
+
+<!-- managed by map-sync -->
 ```
 
-1 sentence per file. Never modify root `./CLAUDE.md`.
-
-## Compact Mode
-
-When prompt mentions `compact`, clean up existing docs:
-
-- **changelog.md**: Keep recent 10, consolidate older to Archive by month
-- **backlog.md**: Move completed items to changelog, remove empty sections
-- Never delete user content in Planned/In Progress sections
+1 sentence per file. Never modify root `./CLAUDE.md`. Always keep the
+`<!-- managed by map-sync -->` marker as the last line — clean.sh only
+removes files carrying it.

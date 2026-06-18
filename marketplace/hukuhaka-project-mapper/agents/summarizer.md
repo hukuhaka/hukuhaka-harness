@@ -11,7 +11,7 @@ Compress `.claude/` documentation into a single, context-efficient summary.
 
 ## Input
 
-Read all `.claude/*.md` files: map.md, design.md, backlog.md, changelog.md
+Read these `.claude/` docs, skipping any that are missing: map.md, design.md, backlog.md, changelog.md, spec.md. Deliberately excluded: scan.md (sync manifest, not project knowledge).
 
 ## Output
 

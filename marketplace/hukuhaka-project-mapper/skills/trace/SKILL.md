@@ -6,10 +6,10 @@ description: >
   flows between components. Do NOT use for audit (audit skill) or documentation (/map-sync command).
 hooks:
   PreToolUse:
-    - matcher: "Agent|Write"
+    - matcher: "Agent|Write|Edit"
       hooks:
         - type: command
-          command: "printf 'trace is read-only investigation. No Agent spawning, no Write - Edit allowed only for optional backlog notes.' >&2; exit 2"
+          command: "printf 'trace is read-only investigation. No Agent spawning, no Write/Edit - to capture follow-ups, suggest the backlog skill in the report.' >&2; exit 2"
 ---
 
 # Trace
@@ -21,7 +21,7 @@ Trace code flow to find where actual behavior diverges from expected.
 - Do NOT spawn any agents via Agent tool. Handle everything directly
 - If you find yourself spawning an agent, STOP — you are doing it wrong
 - Maximum search rounds: depth option (default 5, max 8)
-- NEVER use the Write tool. Trace is read-only analysis (Edit only for optional backlog integration)
+- NEVER use Write or Edit. Trace is fully read-only — to capture follow-up work, suggest the backlog skill in the report's Next Steps
 - If trace target is too vague, ask for clarification via AskUserQuestion before starting
 - Convergence checkpoint: After round 3, present findings and ask user before continuing
 - One hypothesis at a time. Do NOT pursue multiple paths in parallel
@@ -85,11 +85,11 @@ Iterative tracing. Each round (max depth):
 2. Identify next link: caller, callee, data path, or reference
 3. Follow via Grep or Read
 4. Record: `{round, file:line, observation, next_hypothesis}`
-5. Check convergence: if actual != expected divergence found, stop
+5. Check convergence: if the actual != expected divergence point is found, stop tracing and go straight to Step 7 (Report)
 
 ### 6. Narrow
 
-Triggered at round 3 OR when convergence detected:
+Triggered at round 3 if convergence has NOT been reached yet (converged traces skip this and report directly):
 
 1. Present findings so far to user via AskUserQuestion
 2. Show current chain and top hypothesis

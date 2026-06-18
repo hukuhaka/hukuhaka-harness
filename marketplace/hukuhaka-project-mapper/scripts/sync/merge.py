@@ -69,10 +69,13 @@ def main(argv: list[str]) -> int:
             if not isinstance(item, dict) or "path" not in item:
                 continue
             path = item["path"]
-            known = path in cand_entries or path in cand_comps or path in cand_dirs
-            if not known:
-                dropped.append(path)
-                continue
+            if path not in cand_entries and path not in cand_comps and path not in cand_dirs:
+                slashed = path.rstrip("/") + "/"
+                if slashed in cand_dirs:  # directory keys carry a trailing slash
+                    path = slashed
+                else:
+                    dropped.append(path)
+                    continue
             desc_by_path[path] = item
 
     def node(c: dict, path: str) -> dict:

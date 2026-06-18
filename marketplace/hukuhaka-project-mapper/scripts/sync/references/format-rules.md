@@ -1,6 +1,6 @@
 # .claude/ Document Format Rules
 
-These rules apply when generating or updating .claude/ project documentation. The writer agent references this via `skills: [hukuhaka-project-mapper:map-sync]`.
+These rules apply when generating or updating .claude/ project documentation. The writer agent Reads this file before writing (step 0 of its workflow).
 
 ## 5 Files
 

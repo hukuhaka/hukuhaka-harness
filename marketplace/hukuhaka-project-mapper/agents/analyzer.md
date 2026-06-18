@@ -9,47 +9,11 @@ skills:
 
 # Analyzer
 
-Analyze codebase and return structured JSON. Do NOT generate prose or write files.
-
-## Output Schema
-
-Return JSON with this structure:
-
-- `stats`: `files_scanned`, `queries_run`, `todos_found`, `entry_points_found`, `components_found`
-- `entry_points`: array of `{name, path, description, depends_on}` — use `file:symbol` format for path
-- `data_flow`: single-line string with arrows (e.g., "Input -> Process -> Output")
-- `components`: array of `{name, path, description, depends_on}`
-- `directories`: array of `{path, description}`
-- `stack`: array of strings (e.g., ["Python 3.10+", "FastAPI"])
-- `patterns`: array of `{name, path, description}`
-- `decisions`: array of `{decision, rationale}`
-- `todos`: array of `{file, line, text}` from TODO/FIXME grep
-
-`depends_on`: array of short names referencing other components/entry_points in this JSON. Only include project-internal modules imported by 2+ other files. Omit for leaf modules (no project-internal dependents). Determine by grepping import references — only include if the target module appears in 2+ other source files' imports.
-
-## Workflow
-
-> Note: standard and scatter modes are retained for legacy/fallback use only —
-> map-sync now uses the skeleton/bundle pipeline with the describe and synth
-> agents. Improve mode is the live path (audit skill).
-
-1. **Code search**: Grep for entry points (main, app, index), core classes/functions, config files
-2. **File structure**: `Glob` for source files, group by directory
-3. **TODO scan**: `Grep` for TODO/FIXME
-4. **Return JSON** with `stats` as first field. Nothing else.
-
-## Scatter Mode
-
-When prompt starts with `scatter:`, do lightweight folder analysis:
-
-1. `Glob`: List files in target folder (non-recursive)
-2. `Read`: First 20 lines of each file for purpose
-
-Return scatter JSON: `stats`, `folder_path`, `folder_name`, `purpose`, `files`, `children`
+Analyze the codebase for improvement opportunities and return structured JSON. Do NOT generate prose or write files. The audit skill is the only caller (improve mode); doc generation is handled by the describe/synth/writer pipeline, not this agent.
 
 ## Improve Mode
 
-When prompt starts with `improve:`, analyze for improvement opportunities.
+Prompt starts with `improve:`.
 
 Input fields: `focus` (large-files, dead-code, duplicates, refactoring, health, or all), `threshold`, `context`
 
@@ -58,7 +22,7 @@ Input fields: `focus` (large-files, dead-code, duplicates, refactoring, health, 
 Return improve JSON: `stats` (files_scanned, categories_checked, total_findings, confidence_distribution: {high, medium, low}), `findings` array with:
 
 - `id`, `category`, `title`, `files_affected`, `priority` (high/medium/low)
-- `confidence` (high/medium/low) — how certain is this finding? See analysis-guide for criteria per category
+- `confidence` (high/medium/low) — how certain is this finding? Read `${CLAUDE_PLUGIN_ROOT}/skills/audit/references/analysis-guide.md` once before analyzing for the per-category criteria
 - `effort` (small/medium/large) — estimated fix effort. small=<30min single file, medium=1-3 files, large=cross-cutting
 - `evidence` — specific proof (grep results, line counts, reference counts). NOT just file names or sizes
 - `suggestion` — actionable fix with concrete details (target file names, refactoring technique, what to extract)

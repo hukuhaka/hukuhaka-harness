@@ -18,6 +18,7 @@ Generate and verify `.claude/spec.md` as a prescriptive document. spec.md define
 
 ## Rules
 
+- Routing on `$ARGUMENTS`: starts with `verify` → verify flow; starts with `generate` or is empty → generate flow; anything else → AskUserQuestion to pick one
 - generate: spawns verifier agent in analyze mode, then uses AskUserQuestion to build prescriptive rules
 - verify: spawns verifier agent in verify mode, then offers drift resolution via AskUserQuestion
 
@@ -28,8 +29,10 @@ Create `.claude/spec.md` via prescriptive question-based flow. Follow [spec-guid
 ### Phase 1: Pre-flight
 
 1. Check `.claude/` exists. If not → "Run `/hukuhaka-project-mapper:map-init` first" and STOP
-2. If `.claude/spec.md` exists → use AskUserQuestion: "spec.md already exists. Overwrite or keep?"
-   - Keep → STOP with message "Keeping existing spec.md"
+2. If `.claude/spec.md` is missing (project init'ed before spec seeding) → run `bash ${CLAUDE_PLUGIN_ROOT}/scripts/setup/init.sh` — it skips existing files and seeds only the missing templates
+3. Read `.claude/spec.md`:
+   - Still contains the `<!-- placeholder:` marker → proceed (generate will fill it)
+   - Has real content → AskUserQuestion: "spec.md already has content. Overwrite or keep?" — Keep → STOP with message "Keeping existing spec.md"
 
 ### Phase 2: Analyze codebase
 
@@ -59,9 +62,9 @@ Present detected facts and ask user to classify them as constraints:
 
 If Q1 = "I have rules": additional AskUserQuestion to capture naming rules. Q: "Describe your naming conventions:" options: [snake_case everywhere, camelCase for JS / snake_case for Python, PascalCase for classes / camelCase for functions, Other]
 
-### Phase 5: Write
+### Phase 5: Fill
 
-Write `.claude/spec.md` using prescriptive framing. Follow [spec-guide.md](references/spec-guide.md) output format.
+Edit `.claude/spec.md` (replace the seeded placeholder content — the file always exists after Phase 1) using prescriptive framing. Follow [spec-guide.md](references/spec-guide.md) output format.
 
 - Detected facts → `Rule:` / `> IMMUTABLE` form
 - User-selected constraints → hard rules

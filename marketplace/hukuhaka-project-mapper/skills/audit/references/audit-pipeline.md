@@ -7,7 +7,7 @@ You MUST execute these 2 steps sequentially. Each step MUST complete before the 
 Spawn exactly 1 auditor agent:
 
 ```
-Agent(subagent_type: "hukuhaka-project-mapper:auditor", prompt: "Gather project context. focus: <focus>, threshold: <threshold>")
+Agent(subagent_type: "hukuhaka-project-mapper:auditor", prompt: "Gather project context.")
 ```
 
 Wait for the auditor to return a context JSON result. Do NOT proceed until you have the JSON.

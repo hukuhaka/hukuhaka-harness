@@ -15,7 +15,7 @@
 # is added to Claude's context. The matcher in hooks/hooks.json covers
 # the four trigger forms: startup|resume|clear|compact.
 #
-# Reads stdin (hook input JSON) but does not parse it — cwd is taken from
+# Ignores stdin (hook input JSON) — cwd is taken from
 # $CLAUDE_PROJECT_DIR per Claude Code's hook contract.
 
 set -u
@@ -37,7 +37,7 @@ read -r -d '' BODY <<'EOF' || true
 - [changelog.md](.claude/changelog.md): Recent (load) + Archive (on demand)
 - [spec.md](.claude/spec.md): interface contracts, naming rules, definition of done
 
-Doc format rules (file:symbol style, llms.txt, line limits, NEVER ASCII): see `hukuhaka-project-mapper:map-sync` skill.
+Doc format rules (file:symbol style, llms.txt, line limits, NEVER ASCII): applied by `/hukuhaka-project-mapper:map-sync` (writer agent loads the plugin's `scripts/sync/references/format-rules.md`).
 </hukuhaka-project-mapper-context>
 EOF
 

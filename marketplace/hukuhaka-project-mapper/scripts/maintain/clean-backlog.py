@@ -10,6 +10,7 @@ Usage:
 """
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
 
@@ -53,9 +54,6 @@ def main() -> int:
         print("clean-backlog: no completed (- [x]) items found, nothing to do")
         return 0
 
-    # Write back trimmed backlog (preserve trailing newline)
-    backlog_path.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
-
     # Prepend moved items to changelog under ## Recent
     if not changelog_path.is_file():
         # Create minimal changelog if missing
@@ -75,11 +73,14 @@ def main() -> int:
     while insert_at < len(cl_lines) and cl_lines[insert_at] == "":
         insert_at += 1
 
-    # Build moved item lines (uncheck the [x] when moving — they're now logged)
+    # Build moved item lines: the [x] becomes a [YYYY-MM-DD] date prefix
+    # (changelog Recent entry format); continuation lines move verbatim.
+    today = date.today().isoformat()
     moved: list[str] = []
     for chunk in removed_chunks:
         for line in chunk:
-            line = re.sub(r"^([-*]\s+)\[x\]\s+", r"\1", line, count=1, flags=re.IGNORECASE)
+            line = re.sub(r"^([-*]\s+)\[x\]\s+", rf"\1[{today}] ", line,
+                          count=1, flags=re.IGNORECASE)
             moved.append(line)
 
     new_lines = (
@@ -88,7 +89,10 @@ def main() -> int:
         + ([""] if cl_lines[insert_at:insert_at + 1] != [""] else [])
         + cl_lines[insert_at:]
     )
+    # Changelog first, backlog second: if interrupted between the two writes,
+    # items are duplicated (recoverable) rather than silently lost.
     changelog_path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+    backlog_path.write_text("\n".join(kept).rstrip() + "\n", encoding="utf-8")
 
     print(
         f"clean-backlog: moved {len(removed_chunks)} completed item(s) "

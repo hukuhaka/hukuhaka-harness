@@ -23,6 +23,8 @@ PRIORITY_LABELS = {
     "medium": "### Medium Priority",
     "low": "### Low Priority",
 }
+# Sub-sections must keep High -> Medium -> Low order inside ## Planned.
+CANONICAL_ORDER = [PRIORITY_LABELS["high"], PRIORITY_LABELS["medium"], PRIORITY_LABELS["low"]]
 
 
 def main() -> int:
@@ -73,8 +75,18 @@ def main() -> int:
         new_entry_lines.append(f"  - {args.behavior}")
 
     if pri_idx is None:
-        # Sub-section missing — create at end of ## Planned
+        # Sub-section missing — create it at its canonical H->M->L position:
+        # just before the first existing sub-section that ranks below it,
+        # or at the end of ## Planned if none does.
+        rank = CANONICAL_ORDER.index(label)
         insert_at = end_idx
+        for i in range(planned_idx + 1, end_idx):
+            s = lines[i].strip()
+            if s in CANONICAL_ORDER and CANONICAL_ORDER.index(s) > rank:
+                insert_at = i
+                break
+        while insert_at > planned_idx + 1 and lines[insert_at - 1].strip() == "":
+            insert_at -= 1
         block = ["", label, ""] + new_entry_lines
         new_lines = lines[:insert_at] + block + lines[insert_at:]
     else:

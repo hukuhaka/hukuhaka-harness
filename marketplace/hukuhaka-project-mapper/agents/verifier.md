@@ -20,8 +20,8 @@ When prompt starts with `analyze:`, skip spec.md read. Run Analysis Protocol onl
 
 Run these tool calls to gather current codebase state:
 
-1. `Glob("*/", head_limit: 15)` — top-level directory structure
-2. `Glob("**/*.{py,ts,js,go,rs,java,rb,sh,c,cpp}", head_limit: 20)` — language detection
+1. `Glob("*/")` — top-level directory structure (use the first ~15 results)
+2. `Glob("**/*.{py,ts,js,go,rs,java,rb,sh,c,cpp}")` — language detection (use the first ~20 results)
 3. `Grep("class.*ABC|abstract class|interface |protocol |trait ")` — interface signatures
 4. `Grep("class |module |export default")` — component names
 5. `Glob("**/*.{yaml,yml,toml,json,ini,env}")` — config files

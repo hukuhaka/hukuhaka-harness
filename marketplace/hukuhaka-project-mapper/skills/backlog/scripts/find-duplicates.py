@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 ITEM_RE = re.compile(r"^[-*]\s+(?:\[[ x]\]\s+)?(.+)$")
-TOKEN_RE = re.compile(r"[A-Za-z0-9_:\.]+")
+TOKEN_RE = re.compile(r"[\w:.]+")  # \w is Unicode in py3 — covers non-Latin entries
 
 
 def tokens(text: str) -> set[str]:
@@ -45,7 +45,18 @@ def main() -> int:
         return 0
 
     matches: list[tuple[float, int, str]] = []
+    section = ""
     for lineno, line in enumerate(backlog.read_text(encoding="utf-8").splitlines(), start=1):
+        h = re.match(r"^##\s+(.+)$", line)
+        if h:
+            section = h.group(1).strip().lower()
+            continue
+        # Only live work counts as a duplicate: skip retired sections and
+        # completed items, so they can't outrank live Planned matches.
+        if section in ("done", "archive"):
+            continue
+        if re.match(r"^[-*]\s+\[x\]", line, re.IGNORECASE):
+            continue
         m = ITEM_RE.match(line)
         if not m:
             continue

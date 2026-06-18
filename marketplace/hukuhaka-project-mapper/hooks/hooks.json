@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/session-start-inject.sh"
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/session-start-inject.sh"
           }
         ]
       }
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 ${CLAUDE_PLUGIN_ROOT}/scripts/sync/sync_cost.py"
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/sync/sync_cost.py"
           }
         ]
       }

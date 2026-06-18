@@ -1,13 +1,10 @@
 ---
 name: map-sync
 description: "Full sync pipeline: scatter, skeleton, bundle, describe+synth, merge, write, validate"
-allowed-tools:
-  - "Bash(bash:*)"
-  - "Task"
-  - "Agent"
+allowed-tools: Bash(bash:*), Task, Agent
 ---
 
-# /hukuhaka-project-mapper:map-sync [path]
+# /hukuhaka-project-mapper:map-sync
 
 Full documentation sync pipeline. Generates `.claude/` docs from codebase analysis. Reads `.claude/scan.md` as the manifest for which directories receive scattered `CLAUDE.md` — run `/hukuhaka-project-mapper:map-scan` first if scan.md does not exist.
 
@@ -23,7 +20,7 @@ Before starting the pipeline, run the bundled preflight script via Bash from the
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/sync/preflight.sh
 ```
 
-The script cats `.claude/map.md`, `.claude/design.md`, `.claude/spec.md` (if they exist) into stdout so the orchestrator sees the current doc state.
+The script cats `.claude/map.md`, `.claude/design.md`, `.claude/spec.md`, `.claude/scan.md` (if they exist) into stdout so the orchestrator sees the current doc state — Step 1's scan.md gate reads from this output.
 
 Do NOT use Bash `ls` to enumerate `.claude/` and do NOT skip preflight. If the script reports `.claude/` does not exist, tell user to run `/hukuhaka-project-mapper:map-init` first and STOP.
 
@@ -177,7 +174,7 @@ The `Usage` line is supplied by the sync-cost hook, which fires after the
 Step 5 `record-sync.sh` call and injects the figures into context via
 `additionalContext`. Copy them verbatim from that injected
 `map-sync usage for this run ...` note into the block above. If the note is
-absent (non-git project, or the hook did not run), omit the `Usage` block.
+absent (the hook did not run), omit the `Usage` block.
 
 ## On Failure
 

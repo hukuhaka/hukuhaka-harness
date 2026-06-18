@@ -2,7 +2,6 @@
 name: synth
 description: "Architecture synthesizer. Produces data_flow, patterns, decisions from a skeleton bundle. No code exploration."
 tools: Read
-disallowedTools: Grep, Glob, Bash, Edit, Write, Agent
 model: sonnet
 ---
 

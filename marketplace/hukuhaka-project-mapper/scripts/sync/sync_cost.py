@@ -32,13 +32,22 @@ from datetime import datetime
 from pathlib import Path
 
 # An actual terminal-step invocation: record-sync.sh (canonical) or
-# record_sync.py (direct). Anchored so a mere mention of the string in prose
-# (e.g. a git commit message containing "record-sync") does NOT false-trigger.
-RECORD_INVOCATION = re.compile(r"(?:^|[\s;&|/])record[-_]sync\.(?:sh|py)(?:[\s;&|>]|$)")
-# Pipeline start = the LAST preflight.sh invocation before record-sync. Same
-# anchoring: a command that only mentions "preflight" in prose must not move the
-# window start (it would silently undercount the wall/token totals).
-PREFLIGHT_INVOCATION = re.compile(r"(?:^|[\s;&|/])preflight\.sh(?:[\s;&|>]|$)")
+# record_sync.py (direct). Requires an invoking verb (bash/sh/python3) so that
+# merely reading the script (cat/grep/sed on its path) does NOT false-trigger.
+# The leading anchor allows the invocation at string-start, after a shell
+# separator (;&|), OR on a continuation line (\n) of a multi-line Bash command
+# (re.MULTILINE) — the orchestrator routinely bundles the terminal step into a
+# single multi-line script, where the bash call sits on its own line, not the
+# first one. Newline is a real statement separator, so this is exact, not loose.
+RECORD_INVOCATION = re.compile(
+    r"(?:^\s*|[;&|\n]\s*)(?:bash|sh|python3?)\s+\S*record[-_]sync\.(?:sh|py)(?:[\s;&|>]|$)",
+    re.MULTILINE)
+# Pipeline start = the LAST sync preflight invocation before record-sync. Same
+# verb + newline anchoring, plus the sync/ path segment so the backlog skill's
+# own preflight.sh cannot move the window start.
+PREFLIGHT_INVOCATION = re.compile(
+    r"(?:^\s*|[;&|\n]\s*)(?:bash|sh)\s+\S*sync/preflight\.sh(?:[\s;&|>]|$)",
+    re.MULTILINE)
 
 
 def parse_ts(s: str):
@@ -67,7 +76,7 @@ def main() -> int:
     # Single pass: remember where the LAST preflight Bash call sits, then sum
     # usage from that line onward (= this sync run, not earlier session work).
     events: list[dict] = []
-    start_idx = 0
+    start_idx = None
     with open(transcript, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
@@ -86,6 +95,10 @@ def main() -> int:
                         str((block.get("input") or {}).get("command", ""))):
                     start_idx = len(events) - 1
 
+    if start_idx is None:
+        # No pipeline-start anchor found — summing from the beginning would
+        # report the entire session as "map-sync usage". Stay silent instead.
+        return 0
     window = events[start_idx:]
     if not window:
         return 0

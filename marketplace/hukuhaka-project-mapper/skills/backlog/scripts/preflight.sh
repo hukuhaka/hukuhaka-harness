@@ -10,7 +10,7 @@ TARGET_DIR="${1:-.claude}"
 BACKLOG="$TARGET_DIR/backlog.md"
 
 if [ ! -f "$BACKLOG" ]; then
-    echo "Preflight: $BACKLOG not found — run /hukuhaka-project-mapper:map-init first"
+    echo "Preflight: $BACKLOG not found — run /hukuhaka-project-mapper:map-init first" >&2
     exit 1
 fi
 

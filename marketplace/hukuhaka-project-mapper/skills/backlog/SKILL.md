@@ -7,10 +7,10 @@ description: >
   plan-mode work.
 hooks:
   PreToolUse:
-    - matcher: "Agent|Write"
+    - matcher: "Agent|Write|Edit"
       hooks:
         - type: command
-          command: "printf 'backlog handles capture directly. No Agent spawning, no Write - use Edit on backlog.md only.' >&2; exit 2"
+          command: "printf 'backlog handles capture directly. No Agent spawning, no Write/Edit - append entries via scripts/append-entry.py.' >&2; exit 2"
 ---
 
 # Backlog
@@ -54,7 +54,7 @@ Run the duplicate finder against the candidate description:
 python3 ${CLAUDE_PLUGIN_ROOT}/skills/backlog/scripts/find-duplicates.py "<description>"
 ```
 
-The script reports any existing entries with token-overlap ≥ 0.20 (Jaccard). If matches are found, use AskUserQuestion to ask whether to proceed (new entry) or merge into the existing item.
+The script reports any existing entries with token-overlap ≥ 0.20 (Jaccard). If matches are found, use AskUserQuestion to ask whether to proceed (new entry) or stop because the existing item already covers it. There is no in-place merge path — backlog.md is script-written only (Write/Edit are blocked); if the user wants the existing entry reworded, show the exact line for them to update manually and stop.
 
 ### 4. Research
 

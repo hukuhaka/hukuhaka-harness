@@ -1,10 +1,7 @@
 ---
 name: map-scan
 description: "Decide CLAUDE.md placement: write .claude/scan.md + placeholder CLAUDE.md files"
-allowed-tools:
-  - "Bash(bash:*)"
-  - "Bash(python3:*)"
-  - "Read"
+allowed-tools: Bash(bash:*), Bash(python3:*), Read
 ---
 
 # /hukuhaka-project-mapper:map-scan [path]
@@ -27,11 +24,13 @@ Invoke the bundled script via Bash from the project root (cwd):
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/scan/scan.sh
 ```
 
+If `$ARGUMENTS` contains a path, append it as the script's argument (`bash ... scan.sh <path>`); otherwise the script scans cwd.
+
 The script:
 1. Walks the project directory tree (via `git ls-files -co --exclude-standard`, falling back to `os.walk` if not a git repo)
 2. Classifies each directory with a deterministic 6-rule decision tree (see "Decision tree" below)
 3. Writes `.claude/scan.md` (a single table of all decisions)
-4. Touches an empty `CLAUDE.md` at every `decision == scatter` row, preserving any existing `CLAUDE.md` content (does not overwrite)
+4. Touches a placeholder `CLAUDE.md` (heading + `<!-- managed by map-sync -->` marker) at every `decision == scatter` row, preserving any existing `CLAUDE.md` content (does not overwrite)
 
 ### Step 2 — Report
 
@@ -66,7 +65,7 @@ If a directory has been added to the project since the last scan and `map-sync` 
 
 ## On Failure
 
-If `scan.sh` fails (missing `python3`, not a git repo, no source files found), STOP and report the script's stderr. Do NOT attempt LLM fallback. Do NOT use the Write/Edit tools to create `scan.md` manually.
+If `scan.sh` fails (missing `python3`, no source files found), STOP and report the script's stderr. (A non-git project is NOT a failure — the script falls back to `os.walk`.) Do NOT attempt LLM fallback. Do NOT use the Write/Edit tools to create `scan.md` manually.
 
 ## Critical Rules
 

@@ -774,6 +774,68 @@ unregister_dropped_plugins() {
 
 unregister_dropped_plugins
 
+# ── Prune ghost plugins (rename-aware) ───────────────────────────────
+# unregister_dropped_plugins only sees names still present in source
+# (prev = manifest ∩ PLUGIN_NAMES), so a *renamed* plugin leaves a ghost:
+# an installed_plugins.json entry + install dir under the OLD name that
+# nothing tears down. This pass derives ghosts straight from the registry:
+# any "<name>@MARKETPLACE_NAME" key (or install dir under that marketplace)
+# whose name is not in the current source PLUGIN_NAMES. Runs every deploy,
+# independent of --components.
+prune_ghost_plugins() {
+    [ -d "$CLAUDE_DIR/plugins" ] || return 0
+    local current; current=$(printf '%s\n' "${PLUGIN_NAMES[@]}")
+    local ghosts=()
+
+    # 1) Registry ghosts: keys in installed_plugins.json under our marketplace
+    if command -v python3 &>/dev/null; then
+        while IFS= read -r name; do
+            [ -n "$name" ] && ghosts+=("$name")
+        done < <(python3 -c "
+import json,os,sys
+claude,mkt=sys.argv[1],sys.argv[2]
+current=set(filter(None, sys.argv[3].splitlines()))
+ip=os.path.join(claude,'plugins','installed_plugins.json')
+if os.path.isfile(ip):
+    for key in json.load(open(ip)).get('plugins',{}):
+        if key.endswith('@'+mkt):
+            name=key[:-len('@'+mkt)]
+            if name not in current: print(name)
+" "$CLAUDE_DIR" "$MARKETPLACE_NAME" "$current")
+    fi
+
+    # 2) Orphan install dirs not in source (covers manifest-less / empty-dir leftovers)
+    local root="$CLAUDE_DIR/plugins/$MARKETPLACE_NAME"
+    if [ -d "$root" ]; then
+        for d in "$root"/*/; do
+            [ -d "$d" ] || continue
+            local pn; pn="$(basename "$d")"
+            [ "$pn" = ".claude-plugin" ] && continue
+            printf '%s\n' "${PLUGIN_NAMES[@]}" | grep -qx "$pn" && continue
+            local seen=false
+            for g in "${ghosts[@]+"${ghosts[@]}"}"; do [ "$g" = "$pn" ] && seen=true && break; done
+            $seen || ghosts+=("$pn")
+        done
+    fi
+
+    [ "${#ghosts[@]}" -eq 0 ] && return 0
+    echo ""
+    echo "Pruning ghost plugins (renamed/removed at source):"
+    for pn in "${ghosts[@]}"; do
+        unregister_plugin_one "$pn"          # reuse existing teardown
+        local install_dir="$CLAUDE_DIR/plugins/$MARKETPLACE_NAME/$pn"
+        local cache_dir="$CLAUDE_DIR/plugins/cache/$MARKETPLACE_NAME/$pn"
+        if $DRY_RUN; then
+            echo "  [dry-run] would rm $install_dir (+ cache)"
+        else
+            [ -d "$install_dir" ] && rm -rf "$install_dir" && echo "  [ok] removed $install_dir"
+            [ -d "$cache_dir" ]   && rm -rf "$cache_dir"   && echo "  [ok] removed cache for $pn"
+        fi
+    done
+}
+
+prune_ghost_plugins
+
 # ── Register plugins ─────────────────────────────────────────────────
 
 ensure_all_plugins_registered

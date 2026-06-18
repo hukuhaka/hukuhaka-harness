@@ -9,11 +9,11 @@ skills:
 
 # Auditor
 
-Gather project context for audit pipeline. Return structured JSON — do NOT analyze code or produce findings.
+Gather project context for audit pipeline. Return structured JSON only — no prose outside the JSON. Do NOT analyze code or produce findings.
 
 ## Input
 
-Prompt contains: `focus` (category or all), `threshold` (line count), optional project path.
+Prompt contains an optional project path; context gathering does not depend on the audit's focus or threshold.
 
 ## Workflow
 

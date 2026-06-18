@@ -39,7 +39,8 @@ from pathlib import Path
 
 
 STATE_FILE = ".map-sync-state"
-PLACEHOLDER_MARKER = "## Files"  # filled scatter docs always have this; placeholders never do
+FILLED_MARKER = "## Files"  # filled scatter docs always have this; placeholders never do
+MANAGED_MARKER = "<!-- managed by map-sync -->"  # stamped by scan.py and the writer agent
 
 
 # ─── scan.md parsing ─────────────────────────────────────────────────
@@ -76,7 +77,7 @@ def parse_scatter_rows(scan_md: Path) -> list[str]:
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", "-C", str(root), *args],
+        ["git", "-C", str(root), "-c", "core.quotepath=false", *args],
         capture_output=True, text=True, timeout=30,
     )
 
@@ -96,13 +97,15 @@ def commit_valid(root: Path, sha: str) -> bool:
         return False
 
 
-def changed_files(root: Path, since: str) -> list[str]:
+def changed_files(root: Path, since: str) -> list[str] | None:
     """Files changed since <since> (worktree vs commit: committed + staged +
-    unstaged + deletes) unioned with untracked-not-ignored new files."""
-    files: set[str] = set()
-    diff = _git(root, "diff", "--name-only", since)
-    if diff.returncode == 0:
-        files.update(l for l in diff.stdout.splitlines() if l.strip())
+    unstaged + deletes) unioned with untracked-not-ignored new files.
+    Returns None when the diff itself fails — the caller must fall back to a
+    full sync rather than silently treating the run as untracked-only."""
+    diff = _git(root, "diff", "--name-only", "--no-renames", since)
+    if diff.returncode != 0:
+        return None
+    files: set[str] = set(l for l in diff.stdout.splitlines() if l.strip())
     others = _git(root, "ls-files", "--others", "--exclude-standard")
     if others.returncode == 0:
         files.update(l for l in others.stdout.splitlines() if l.strip())
@@ -138,14 +141,19 @@ def longest_scatter_prefix(dirpath: str, scatter: set[str]) -> str | None:
 
 def is_placeholder(root: Path, rel_dir: str) -> bool:
     """A scatter dir is placeholder-only (needs full generation) if its
-    CLAUDE.md is missing or has not yet been filled (no '## Files' section)."""
+    CLAUDE.md is missing, or is map-sync-managed but not yet filled.
+    A hand-curated CLAUDE.md (no managed marker) is never treated as a
+    placeholder — Tier 2 must not regenerate it on every run."""
     cm = root / rel_dir / "CLAUDE.md"
     if not cm.is_file():
         return True
     try:
-        return PLACEHOLDER_MARKER not in cm.read_text(encoding="utf-8")
+        text = cm.read_text(encoding="utf-8")
     except OSError:
         return True
+    if MANAGED_MARKER not in text:
+        return False
+    return FILLED_MARKER not in text
 
 
 def compute_targets(root: Path, scatter_rows: list[str], changed: list[str]) -> list[str]:
@@ -190,6 +198,18 @@ def main(argv: list[str]) -> int:
         return 1
 
     scatter_rows = parse_scatter_rows(scan_md)
+
+    # Drop rows whose directory no longer exists (deleted since last map-scan):
+    # emitting them would let the pipeline resurrect a deleted dir's CLAUDE.md.
+    alive: list[str] = []
+    for r in scatter_rows:
+        if (root / r).is_dir():
+            alive.append(r)
+        else:
+            print(f"# skipping deleted scatter dir (stale scan.md row — "
+                  f"re-run map-scan): {r}/", file=sys.stderr)
+    scatter_rows = alive
+
     if not scatter_rows:
         # No scatter rows at all — nothing to do (map-sync handles messaging).
         return 0
@@ -215,6 +235,10 @@ def main(argv: list[str]) -> int:
     # Incremental path.
     last = read_last_commit(claude_dir)
     changed = changed_files(root, last)  # type: ignore[arg-type]
+    if changed is None:
+        print("# full-sync: git diff against last_synced_commit failed", file=sys.stderr)
+        emit(scatter_rows)
+        return 0
     targets = compute_targets(root, scatter_rows, changed)
     print(f"# incremental: {len(changed)} changed file(s) -> "
           f"{len(targets)}/{len(scatter_rows)} scatter dir(s)", file=sys.stderr)

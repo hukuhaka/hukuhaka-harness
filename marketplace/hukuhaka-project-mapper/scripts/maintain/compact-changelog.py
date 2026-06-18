@@ -28,6 +28,10 @@ def split_sections(text: str) -> tuple[list[str], dict[str, list[str]]]:
         m = HEADER_RE.match(line)
         if m:
             current = m.group(1).strip()
+            if current in sections:
+                print(f"compact-changelog: duplicate '## {current}' section — "
+                      "aborting to avoid data loss; fix the file manually", file=sys.stderr)
+                sys.exit(1)
             sections[current] = []
         elif current is None:
             preamble.append(line)
@@ -102,6 +106,9 @@ def main() -> int:
                 chunks[-1].append(line)
     keep = chunks[: args.keep]
     move = chunks[args.keep :]
+    for c in move:  # don't carry trailing blank lines into Archive
+        while c and not c[-1].strip():
+            c.pop()
 
     if not move:
         print(f"compact-changelog: Recent has {len(chunks)} item(s), keep limit {args.keep}, nothing to move")
@@ -137,6 +144,8 @@ def main() -> int:
     # Reassemble document
     out: list[str] = list(preamble)
     for name, body in sections.items():
+        if out and out[-1].strip():
+            out.append("")
         out.append(f"## {name}")
         out.extend(body)
     final = "\n".join(out).rstrip() + "\n"
