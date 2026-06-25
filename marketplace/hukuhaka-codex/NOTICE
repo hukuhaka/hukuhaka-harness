@@ -1,0 +1,32 @@
+Copyright 2026 OpenAI
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+------------------------------------------------------------------------
+
+This product (hukuhaka-codex) is a modified distribution of the OpenAI
+Codex plugin for Claude Code.
+
+Copyright 2026 hukuhaka
+
+Modifications by hukuhaka (NOT endorsed by OpenAI):
+- Renamed the plugin to "hukuhaka-codex".
+- Added orchestration commands that drive the unmodified Codex runtime:
+  plan, review-loop, duel, full.
+- Added the internal "codex-plan" skill (read-only plan prompt contract and
+  the Claude-side implement handoff).
+
+The upstream Codex runtime under scripts/, agents/codex-rescue.md, hooks/,
+prompts/, schemas/, and the codex-cli-runtime / codex-result-handling /
+gpt-5-4-prompting skills are redistributed unmodified. All modifications are
+licensed under the same Apache License, Version 2.0.

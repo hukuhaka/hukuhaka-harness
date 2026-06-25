@@ -6,6 +6,20 @@ All notable changes to hukuhaka-claude are documented here. The project follows
 Plugin versions (`marketplace/<plugin>/.claude-plugin/plugin.json`) are
 independent — see those files for their own history.
 
+## [1.0.9] — 2026-06-25
+
+### Added
+
+- **New plugin `hukuhaka-codex` (`hukuhaka-codex@0.1.0`)** — a Codex + Claude
+  collaboration harness, an additive Apache-2.0 fork of OpenAI's Codex plugin.
+  On top of the unmodified Codex runtime it adds four orchestration commands:
+  `plan` (Codex drafts a read-only implementation plan, Claude builds it),
+  `review-loop` (Codex challenges, Claude hardens, repeat), `duel` (both solve
+  the task independently, Claude synthesizes), and `full` (plan → build → review
+  loop). Also ships `rescue`, `review`, `adversarial-review`, `setup`, and
+  `status`/`cancel`/`result` commands, a `codex-rescue` agent, and a stop-time
+  review-gate hook.
+
 ## [1.0.8] — 2026-06-18
 
 ### Changed
