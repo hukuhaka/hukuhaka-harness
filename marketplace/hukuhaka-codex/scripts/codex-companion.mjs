@@ -14,12 +14,14 @@ import {
     getCodexAuthStatus,
     getCodexAvailability,
     getSessionRuntimeStatus,
+    importExternalAgentSession,
     interruptAppServerTurn,
     parseStructuredOutput,
     readOutputSchema,
     runAppServerReview,
     runAppServerTurn
   } from "./lib/codex.mjs";
+import { resolveClaudeSessionPath } from "./lib/claude-session-transfer.mjs";
 import { readStdinIfPiped } from "./lib/fs.mjs";
 import { collectReviewContext, ensureGitRepository, resolveReviewTarget } from "./lib/git.mjs";
 import { binaryAvailable, terminateProcessTree } from "./lib/process.mjs";
@@ -35,6 +37,7 @@ import {
 import {
   buildSingleJobSnapshot,
   buildStatusSnapshot,
+  findLatestResumableTaskJob,
   readStoredJob,
   resolveCancelableJob,
   resolveResultJob,
@@ -67,6 +70,7 @@ const REVIEW_SCHEMA = path.join(ROOT_DIR, "schemas", "review-output.schema.json"
 const DEFAULT_STATUS_WAIT_TIMEOUT_MS = 240000;
 const DEFAULT_STATUS_POLL_INTERVAL_MS = 2000;
 const VALID_REASONING_EFFORTS = new Set(["none", "minimal", "low", "medium", "high", "xhigh"]);
+const VALID_TASK_WORKFLOWS = new Set(["task", "plan"]);
 const MODEL_ALIASES = new Map([["spark", "gpt-5.3-codex-spark"]]);
 const STOP_REVIEW_TASK_MARKER = "Run a stop-gate review of the previous Claude turn.";
 
@@ -74,10 +78,11 @@ function printUsage() {
   console.log(
     [
       "Usage:",
-      "  node scripts/codex-companion.mjs setup [--enable-review-gate|--disable-review-gate] [--json]",
-      "  node scripts/codex-companion.mjs review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>]",
-      "  node scripts/codex-companion.mjs adversarial-review [--wait|--background] [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
-      "  node scripts/codex-companion.mjs task [--background] [--write] [--resume-last|--resume|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/codex-companion.mjs setup [--enable-review-gate|--report-only|--disable-review-gate] [--enable-stuck-detector|--disable-stuck-detector] [--json]",
+      "  node scripts/codex-companion.mjs review [--base <ref>] [--scope <auto|working-tree|branch>]",
+      "  node scripts/codex-companion.mjs adversarial-review [--base <ref>] [--scope <auto|working-tree|branch>] [focus text]",
+      "  node scripts/codex-companion.mjs task [--workflow <task|plan>] [--background] [--write] [--resume-last|--resume|--resume-thread <id>|--fresh] [--model <model|spark>] [--effort <none|minimal|low|medium|high|xhigh>] [prompt]",
+      "  node scripts/codex-companion.mjs transfer [--source <claude-jsonl>] [--json]",
       "  node scripts/codex-companion.mjs status [job-id] [--all] [--json]",
       "  node scripts/codex-companion.mjs result [job-id] [--json]",
       "  node scripts/codex-companion.mjs cancel [job-id] [--json]"
@@ -120,6 +125,14 @@ function normalizeReasoningEffort(effort) {
     throw new Error(
       `Unsupported reasoning effort "${effort}". Use one of: none, minimal, low, medium, high, xhigh.`
     );
+  }
+  return normalized;
+}
+
+function normalizeTaskWorkflow(workflow) {
+  const normalized = String(workflow ?? "task").trim().toLowerCase() || "task";
+  if (!VALID_TASK_WORKFLOWS.has(normalized)) {
+    throw new Error(`Unsupported task workflow "${workflow}". Use one of: task, plan.`);
   }
   return normalized;
 }
@@ -212,11 +225,22 @@ async function buildSetupReport(cwd, actionsTaken = []) {
 async function handleSetup(argv) {
   const { options } = parseCommandInput(argv, {
     valueOptions: ["cwd"],
-    booleanOptions: ["json", "enable-review-gate", "disable-review-gate"]
+    booleanOptions: [
+      "json",
+      "enable-review-gate",
+      "report-only",
+      "disable-review-gate",
+      "enable-stuck-detector",
+      "disable-stuck-detector"
+    ]
   });
 
-  if (options["enable-review-gate"] && options["disable-review-gate"]) {
-    throw new Error("Choose either --enable-review-gate or --disable-review-gate.");
+  const gateChoices = ["enable-review-gate", "report-only", "disable-review-gate"].filter((k) => options[k]);
+  if (gateChoices.length > 1) {
+    throw new Error("Choose only one of --enable-review-gate, --report-only, or --disable-review-gate.");
+  }
+  if (options["enable-stuck-detector"] && options["disable-stuck-detector"]) {
+    throw new Error("Choose either --enable-stuck-detector or --disable-stuck-detector.");
   }
 
   const cwd = resolveCommandCwd(options);
@@ -225,10 +249,23 @@ async function handleSetup(argv) {
 
   if (options["enable-review-gate"]) {
     setConfig(workspaceRoot, "stopReviewGate", true);
-    actionsTaken.push(`Enabled the stop-time review gate for ${workspaceRoot}.`);
+    setConfig(workspaceRoot, "reviewGateBlocking", true);
+    actionsTaken.push(`Enabled the stop-time review gate (blocking) for ${workspaceRoot}.`);
+  } else if (options["report-only"]) {
+    setConfig(workspaceRoot, "stopReviewGate", true);
+    setConfig(workspaceRoot, "reviewGateBlocking", false);
+    actionsTaken.push(`Enabled the stop-time review in report-only mode (never blocks) for ${workspaceRoot}.`);
   } else if (options["disable-review-gate"]) {
     setConfig(workspaceRoot, "stopReviewGate", false);
     actionsTaken.push(`Disabled the stop-time review gate for ${workspaceRoot}.`);
+  }
+
+  if (options["enable-stuck-detector"]) {
+    setConfig(workspaceRoot, "stuckDetector", true);
+    actionsTaken.push(`Enabled the Codex stuck-detector (nudges after a Bash failure streak) for ${workspaceRoot}.`);
+  } else if (options["disable-stuck-detector"]) {
+    setConfig(workspaceRoot, "stuckDetector", false);
+    actionsTaken.push(`Disabled the Codex stuck-detector for ${workspaceRoot}.`);
   }
 
   const finalReport = await buildSetupReport(cwd, actionsTaken);
@@ -300,18 +337,6 @@ function filterJobsForCurrentClaudeSession(jobs) {
   return jobs.filter((job) => job.sessionId === sessionId);
 }
 
-function findLatestResumableTaskJob(jobs) {
-  return (
-    jobs.find(
-      (job) =>
-        job.jobClass === "task" &&
-        job.threadId &&
-        job.status !== "queued" &&
-        job.status !== "running"
-    ) ?? null
-  );
-}
-
 async function waitForSingleJobSnapshot(cwd, reference, options = {}) {
   const timeoutMs = Math.max(0, Number(options.timeoutMs) || DEFAULT_STATUS_WAIT_TIMEOUT_MS);
   const pollIntervalMs = Math.max(100, Number(options.pollIntervalMs) || DEFAULT_STATUS_POLL_INTERVAL_MS);
@@ -332,6 +357,7 @@ async function waitForSingleJobSnapshot(cwd, reference, options = {}) {
 
 async function resolveLatestTrackedTaskThread(cwd, options = {}) {
   const workspaceRoot = resolveWorkspaceRoot(cwd);
+  const workflow = options.workflow ?? "task";
   const sessionId = getCurrentClaudeSessionId();
   const jobs = sortJobsNewestFirst(listJobs(workspaceRoot)).filter((job) => job.id !== options.excludeJobId);
   const visibleJobs = filterJobsForCurrentClaudeSession(jobs);
@@ -340,16 +366,22 @@ async function resolveLatestTrackedTaskThread(cwd, options = {}) {
     throw new Error(`Task ${activeTask.id} is still running. Use /hukuhaka-codex:status before continuing it.`);
   }
 
-  const trackedTask = findLatestResumableTaskJob(visibleJobs);
+  const trackedTask = findLatestResumableTaskJob(visibleJobs, workflow);
   if (trackedTask) {
     return { id: trackedTask.threadId };
   }
 
-  if (sessionId) {
-    return null;
+  // Cross-session fallback: a resumable task thread from an EARLIER Claude
+  // session (its job survives SessionEnd, see cleanupSessionJobs). This is what
+  // makes `/plan`, `/full`, and `/rescue --resume` actually continue across a
+  // session boundary, as codex-plan/SKILL.md documents. Only the active-task
+  // guard above is session-scoped; resume itself is an explicit user action.
+  const crossSessionTask = sessionId ? findLatestResumableTaskJob(jobs, workflow) : null;
+  if (crossSessionTask) {
+    return { id: crossSessionTask.threadId };
   }
 
-  return findLatestTaskThread(workspaceRoot);
+  return workflow === "task" ? findLatestTaskThread(workspaceRoot) : null;
 }
 
 async function executeReviewRun(request) {
@@ -461,13 +493,17 @@ async function executeTaskRun(request) {
 
   const taskMetadata = buildTaskRunMetadata({
     prompt: request.prompt,
-    resumeLast: request.resumeLast
+    resumeLast: request.resumeLast || Boolean(request.resumeThreadId),
+    workflow: request.workflow
   });
 
-  let resumeThreadId = null;
-  if (request.resumeLast) {
+  // An explicit --resume-thread <id> pins that exact thread; otherwise
+  // --resume-last resolves the most recent resumable thread for this repo.
+  let resumeThreadId = request.resumeThreadId ? String(request.resumeThreadId).trim() : null;
+  if (!resumeThreadId && request.resumeLast) {
     const latestThread = await resolveLatestTrackedTaskThread(workspaceRoot, {
-      excludeJobId: request.jobId
+      excludeJobId: request.jobId,
+      workflow: request.workflow
     });
     if (!latestThread) {
       throw new Error("No previous Codex task thread was found for this repository.");
@@ -476,7 +512,7 @@ async function executeTaskRun(request) {
   }
 
   if (!request.prompt && !resumeThreadId) {
-    throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last.");
+    throw new Error("Provide a prompt, a prompt file, piped stdin, or use --resume-last/--resume-thread.");
   }
 
   const result = await runAppServerTurn(workspaceRoot, {
@@ -534,7 +570,7 @@ function buildReviewJobMetadata(reviewName, target) {
   };
 }
 
-function buildTaskRunMetadata({ prompt, resumeLast = false }) {
+function buildTaskRunMetadata({ prompt, resumeLast = false, workflow = "task" }) {
   if (!resumeLast && String(prompt ?? "").includes(STOP_REVIEW_TASK_MARKER)) {
     return {
       title: "Codex Stop Gate Review",
@@ -542,7 +578,14 @@ function buildTaskRunMetadata({ prompt, resumeLast = false }) {
     };
   }
 
-  const title = resumeLast ? "Codex Resume" : "Codex Task";
+  const title =
+    workflow === "plan"
+      ? resumeLast
+        ? "Codex Plan Resume"
+        : "Codex Plan"
+      : resumeLast
+        ? "Codex Resume"
+        : "Codex Task";
   const fallbackSummary = resumeLast ? DEFAULT_CONTINUE_PROMPT : "Task";
   return {
     title,
@@ -561,16 +604,17 @@ function getJobKindLabel(kind, jobClass) {
   return jobClass === "review" ? "review" : "rescue";
 }
 
-function createCompanionJob({ prefix, kind, title, workspaceRoot, jobClass, summary, write = false }) {
+function createCompanionJob({ prefix, kind, title, workspaceRoot, jobClass, summary, write = false, workflow = null }) {
   return createJobRecord({
     id: generateJobId(prefix),
     kind,
-    kindLabel: getJobKindLabel(kind, jobClass),
+    kindLabel: workflow === "plan" ? "plan" : getJobKindLabel(kind, jobClass),
     title,
     workspaceRoot,
     jobClass,
     summary,
-    write
+    write,
+    ...(workflow ? { workflow } : {})
   });
 }
 
@@ -586,7 +630,7 @@ function createTrackedProgress(job, options = {}) {
   };
 }
 
-function buildTaskJob(workspaceRoot, taskMetadata, write) {
+function buildTaskJob(workspaceRoot, taskMetadata, write, workflow = "task") {
   return createCompanionJob({
     prefix: "task",
     kind: "task",
@@ -594,11 +638,12 @@ function buildTaskJob(workspaceRoot, taskMetadata, write) {
     workspaceRoot,
     jobClass: "task",
     summary: taskMetadata.summary,
-    write
+    write,
+    workflow
   });
 }
 
-function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId }) {
+function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, resumeThreadId = null, workflow = "task", jobId }) {
   return {
     cwd,
     model,
@@ -606,7 +651,36 @@ function buildTaskRequest({ cwd, model, effort, prompt, write, resumeLast, jobId
     prompt,
     write,
     resumeLast,
+    resumeThreadId,
+    workflow,
     jobId
+  };
+}
+
+function renderTransferResult(payload) {
+  const lines = [
+    "Transferred the Claude session into a Codex thread with visible turn history.",
+    `Codex session ID: ${payload.threadId}`,
+    `Resume in Codex: ${payload.resumeCommand}`
+  ];
+  return `${lines.join("\n")}\n`;
+}
+
+async function executeTransfer(cwd, options = {}) {
+  const sourcePath = resolveClaudeSessionPath(cwd, {
+    source: options.source
+  });
+  const result = await importExternalAgentSession(cwd, { sourcePath });
+  const payload = {
+    threadId: result.threadId,
+    resumeCommand: `codex resume ${result.threadId}`,
+    sourcePath,
+    sessionId: path.basename(sourcePath, ".jsonl")
+  };
+
+  return {
+    payload,
+    rendered: renderTransferResult(payload)
   };
 }
 
@@ -680,6 +754,11 @@ function enqueueBackgroundTask(cwd, job, request) {
 }
 
 async function handleReviewCommand(argv, config) {
+  // `background` / `wait` are accepted but intentionally NO-OPs at the script
+  // level: a review always runs in the foreground here. Detaching a review is
+  // done by Claude Code's `Bash(run_in_background: true)`, not by this script.
+  // They stay in the parser only so passing them never leaks into the focus
+  // text (unknown flags become positionals); they are not advertised in usage.
   const { options, positionals } = parseCommandInput(argv, {
     valueOptions: ["base", "scope", "model", "cwd"],
     booleanOptions: ["json", "background", "wait"],
@@ -731,7 +810,7 @@ async function handleReview(argv) {
 
 async function handleTask(argv) {
   const { options, positionals } = parseCommandInput(argv, {
-    valueOptions: ["model", "effort", "cwd", "prompt-file"],
+    valueOptions: ["model", "effort", "cwd", "prompt-file", "resume-thread", "workflow"],
     booleanOptions: ["json", "write", "resume-last", "resume", "fresh", "background"],
     aliasMap: {
       m: "model"
@@ -742,24 +821,32 @@ async function handleTask(argv) {
   const workspaceRoot = resolveCommandWorkspace(options);
   const model = normalizeRequestedModel(options.model);
   const effort = normalizeReasoningEffort(options.effort);
+  const workflow = normalizeTaskWorkflow(options.workflow);
   const prompt = readTaskPrompt(cwd, options, positionals);
 
   const resumeLast = Boolean(options["resume-last"] || options.resume);
+  // --resume-thread <id> pins an exact Codex thread instead of resolving "the
+  // latest" one (which races when another Codex call lands between rounds — e.g.
+  // a debate cross-examination). The id is the one printed as "Thread ready
+  // (<id>)" by the run that opened the thread.
+  const resumeThreadId = options["resume-thread"] ? String(options["resume-thread"]).trim() : null;
   const fresh = Boolean(options.fresh);
-  if (resumeLast && fresh) {
-    throw new Error("Choose either --resume/--resume-last or --fresh.");
+  if ((resumeLast || resumeThreadId) && fresh) {
+    throw new Error("Choose either --resume/--resume-last/--resume-thread or --fresh.");
   }
+  const resuming = resumeLast || Boolean(resumeThreadId);
   const write = Boolean(options.write);
   const taskMetadata = buildTaskRunMetadata({
     prompt,
-    resumeLast
+    resumeLast: resuming,
+    workflow
   });
 
   if (options.background) {
     ensureCodexAvailable(cwd);
-    requireTaskRequest(prompt, resumeLast);
+    requireTaskRequest(prompt, resuming);
 
-    const job = buildTaskJob(workspaceRoot, taskMetadata, write);
+    const job = buildTaskJob(workspaceRoot, taskMetadata, write, workflow);
     const request = buildTaskRequest({
       cwd,
       model,
@@ -767,6 +854,8 @@ async function handleTask(argv) {
       prompt,
       write,
       resumeLast,
+      resumeThreadId,
+      workflow,
       jobId: job.id
     });
     const { payload } = enqueueBackgroundTask(cwd, job, request);
@@ -774,7 +863,7 @@ async function handleTask(argv) {
     return;
   }
 
-  const job = buildTaskJob(workspaceRoot, taskMetadata, write);
+  const job = buildTaskJob(workspaceRoot, taskMetadata, write, workflow);
   await runForegroundCommand(
     job,
     (progress) =>
@@ -785,11 +874,26 @@ async function handleTask(argv) {
         prompt,
         write,
         resumeLast,
+        resumeThreadId,
+        workflow,
         jobId: job.id,
         onProgress: progress
       }),
     { json: options.json }
   );
+}
+
+async function handleTransfer(argv) {
+  const { options } = parseCommandInput(argv, {
+    valueOptions: ["cwd", "source"],
+    booleanOptions: ["json"]
+  });
+
+  const cwd = resolveCommandCwd(options);
+  const { payload, rendered } = await executeTransfer(cwd, {
+    source: options.source
+  });
+  outputCommandResult(payload, rendered, options.json);
 }
 
 async function handleTaskWorker(argv) {
@@ -884,19 +988,21 @@ function handleResult(argv) {
 
 function handleTaskResumeCandidate(argv) {
   const { options } = parseCommandInput(argv, {
-    valueOptions: ["cwd"],
+    valueOptions: ["cwd", "workflow"],
     booleanOptions: ["json"]
   });
 
   const cwd = resolveCommandCwd(options);
   const workspaceRoot = resolveCommandWorkspace(options);
+  const workflow = normalizeTaskWorkflow(options.workflow);
   const sessionId = getCurrentClaudeSessionId();
   const jobs = filterJobsForCurrentClaudeSession(sortJobsNewestFirst(listJobs(workspaceRoot)));
-  const candidate = findLatestResumableTaskJob(jobs);
+  const candidate = findLatestResumableTaskJob(jobs, workflow);
 
   const payload = {
     available: Boolean(candidate),
     sessionId,
+    workflow,
     candidate:
       candidate == null
         ? null
@@ -999,6 +1105,9 @@ async function main() {
       break;
     case "task":
       await handleTask(argv);
+      break;
+    case "transfer":
+      await handleTransfer(argv);
       break;
     case "task-worker":
       await handleTaskWorker(argv);

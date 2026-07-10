@@ -13,7 +13,8 @@ import {
   sendBrokerShutdown,
   teardownBrokerSession
 } from "./lib/broker-lifecycle.mjs";
-import { loadState, resolveStateFile, saveState } from "./lib/state.mjs";
+import { TRANSCRIPT_PATH_ENV } from "./lib/claude-session-transfer.mjs";
+import { getConfig, loadState, resolveStateFile, saveState, setConfig } from "./lib/state.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
 export const SESSION_ID_ENV = "CODEX_COMPANION_SESSION_ID";
@@ -50,32 +51,81 @@ function cleanupSessionJobs(cwd, sessionId) {
   }
 
   const state = loadState(workspaceRoot);
-  const removedJobs = state.jobs.filter((job) => job.sessionId === sessionId);
-  if (removedJobs.length === 0) {
+  const sessionJobs = state.jobs.filter((job) => job.sessionId === sessionId);
+  if (sessionJobs.length === 0) {
     return;
   }
 
-  for (const job of removedJobs) {
+  // On session end, terminate jobs still running and mark them cancelled, but
+  // RETAIN completed jobs. Their Codex thread ids are what lets `/plan`,
+  // `/full`, and `/rescue --resume` continue in a later session — deleting them
+  // (the old behavior) silently broke cross-session resume despite the docs
+  // promising it. Active jobs from a dead session can't be continued, so they
+  // are marked cancelled rather than left dangling as "running".
+  const nextJobs = state.jobs.map((job) => {
+    if (job.sessionId !== sessionId) {
+      return job;
+    }
     const stillRunning = job.status === "queued" || job.status === "running";
     if (!stillRunning) {
-      continue;
+      return job;
     }
     try {
       terminateProcessTree(job.pid ?? Number.NaN);
     } catch {
       // Ignore teardown failures during session shutdown.
     }
-  }
+    return { ...job, status: "cancelled" };
+  });
 
   saveState(workspaceRoot, {
     ...state,
-    jobs: state.jobs.filter((job) => job.sessionId !== sessionId)
+    jobs: nextJobs
   });
+}
+
+function emitReviewGateNudge(input) {
+  // One-line, actionable-only nudge: surface the opt-in Stop review-gate while
+  // it is OFF so the proactive-review surface is discoverable without flipping
+  // the default on. Fires once per repo (not every session) so a user who
+  // deliberately leaves the gate off is not nagged forever. Silent on any
+  // failure; never blocks session start.
+  try {
+    const cwd = input.cwd || process.cwd();
+    const workspaceRoot = resolveWorkspaceRoot(cwd);
+    const config = getConfig(workspaceRoot);
+    if (config?.stopReviewGate === true || config?.reviewGateNudgeShown === true) {
+      return;
+    }
+    const additionalContext =
+      "hukuhaka-codex: Codex can proactively review and diagnose your work read-only " +
+      "(it never edits files unless you explicitly ask). The Stop review-gate — Codex " +
+      "auto-reviews each turn's code changes before Claude stops — is currently OFF. " +
+      "Enable it with /hukuhaka-codex:setup --enable-review-gate (blocking) or --report-only " +
+      "(never blocks). You can also run /hukuhaka-codex:setup --enable-stuck-detector to get " +
+      "nudged toward a Codex second opinion after a streak of command failures.";
+    process.stdout.write(
+      `${JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          additionalContext
+        }
+      })}\n`
+    );
+    // Mark as shown so the nudge fires once per repo, not every session. An
+    // explicit `setup --disable-review-gate` leaves this set, so disabling the
+    // gate also suppresses future nags.
+    setConfig(workspaceRoot, "reviewGateNudgeShown", true);
+  } catch {
+    // Discoverability nudge is best-effort; never fail session start over it.
+  }
 }
 
 function handleSessionStart(input) {
   appendEnvVar(SESSION_ID_ENV, input.session_id);
+  appendEnvVar(TRANSCRIPT_PATH_ENV, input.transcript_path);
   appendEnvVar(PLUGIN_DATA_ENV, process.env[PLUGIN_DATA_ENV]);
+  emitReviewGateNudge(input);
 }
 
 async function handleSessionEnd(input) {

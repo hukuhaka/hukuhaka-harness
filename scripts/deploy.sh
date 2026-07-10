@@ -573,6 +573,9 @@ resolve_src() {
 }
 
 echo "Deploying:"
+if has_component "hukuhaka-codex"; then
+    echo "  license: hukuhaka-codex is an Apache-2.0 derivative of openai/codex-plugin-cc (see plugin LICENSE and NOTICE)"
+fi
 count=0
 added=0
 updated=0

@@ -6,6 +6,7 @@ import process from "node:process";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createBrokerEndpoint, parseBrokerEndpoint } from "./broker-endpoint.mjs";
+import { binaryAvailable } from "./process.mjs";
 import { resolveStateDir } from "./state.mjs";
 
 export const PID_FILE_ENV = "CODEX_COMPANION_APP_SERVER_PID_FILE";
@@ -110,13 +111,40 @@ async function isBrokerEndpointReady(endpoint) {
   }
 }
 
+export function getCodexRuntimeFingerprint(cwd, env = process.env) {
+  const versionStatus = binaryAvailable("codex", ["--version"], { cwd, env });
+  if (!versionStatus.available) {
+    return null;
+  }
+  return { codexVersion: versionStatus.detail };
+}
+
+export function shouldReuseBroker(existing, endpointReady, currentFingerprint) {
+  if (!existing || !endpointReady) {
+    return false;
+  }
+  if (!currentFingerprint) {
+    return true;
+  }
+
+  const existingVersion = existing.runtimeFingerprint?.codexVersion;
+  return Boolean(existingVersion && existingVersion === currentFingerprint.codexVersion);
+}
+
 export async function ensureBrokerSession(cwd, options = {}) {
   const existing = loadBrokerSession(cwd);
-  if (existing && (await isBrokerEndpointReady(existing.endpoint))) {
+  const endpointReady = existing ? await isBrokerEndpointReady(existing.endpoint) : false;
+  const fingerprintFactory = options.getRuntimeFingerprint ?? getCodexRuntimeFingerprint;
+  const runtimeFingerprint = fingerprintFactory(cwd, options.env ?? process.env);
+
+  if (shouldReuseBroker(existing, endpointReady, runtimeFingerprint)) {
     return existing;
   }
 
   if (existing) {
+    if (endpointReady) {
+      await sendBrokerShutdown(existing.endpoint);
+    }
     teardownBrokerSession({
       endpoint: existing.endpoint ?? null,
       pidFile: existing.pidFile ?? null,
@@ -164,7 +192,8 @@ export async function ensureBrokerSession(cwd, options = {}) {
     pidFile,
     logFile,
     sessionDir,
-    pid: child.pid ?? null
+    pid: child.pid ?? null,
+    runtimeFingerprint
   };
   saveBrokerSession(cwd, session);
   return session;

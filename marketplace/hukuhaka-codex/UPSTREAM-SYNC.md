@@ -1,36 +1,39 @@
-# Provenance & upstream re-sync
+# Provenance and upstream status
 
 `hukuhaka-codex` is a modified distribution of OpenAI's **codex** plugin for
 Claude Code (Apache-2.0). See `NOTICE` for the modification statement.
 
-## What we added (ours)
-- `commands/plan.md`, `commands/review-loop.md`, `commands/duel.md`, `commands/full.md`
-- `skills/codex-plan/SKILL.md`
-- `.claude-plugin/plugin.json` (renamed), `NOTICE` (modification statement), this file
+## Version coordinates
 
-## What we changed in upstream files
-Only a namespace rename, applied because the plugin name changed from `codex`
-to `hukuhaka-codex` and the namespace is baked into slash-command hint strings
-and the rescue subagent type:
+- Local plugin version: `0.4.0`
+- Fully incorporated upstream baseline: `v1.0.4`
+  (`807e03ac9d5aa23bc395fdec8c3767500a86b3cf`), adapted for the local namespace
+- Last audited upstream release: `v1.0.6`
+  (`db52e28f4d9ded852ab3942cea316258ae4ef346`)
+- Upstream repository: <https://github.com/openai/codex-plugin-cc>
 
-- `/codex:<cmd>`  ->  `/hukuhaka-codex:<cmd>`   (command-ref strings, runtime + command docs)
-- `codex:codex-rescue`  ->  `hukuhaka-codex:codex-rescue`   (subagent type)
-- `Skill(codex:rescue)`  ->  `Skill(hukuhaka-codex:rescue)`
+The baseline and last-audited coordinates are different by design. Auditing a
+release does not mean every upstream change was incorporated.
 
-JS object keys / status labels like `codex: ...` were intentionally NOT touched.
+## Current divergence summary
 
-## Re-syncing a new upstream codex release
-1. Copy the new upstream `plugins/codex/{scripts,prompts,schemas,hooks,agents}`
-   and the upstream `commands/*.md` / `skills/{codex-cli-runtime,codex-result-handling,gpt-5-4-prompting}`
-   over this directory (do NOT overwrite our added files above).
-2. Re-apply the namespace rename:
-   ```bash
-   D=marketplace/hukuhaka-codex
-   grep -rl '/codex:'        "$D" --include='*.md' --include='*.mjs' | xargs -r perl -pi -e 's{/codex:}{/hukuhaka-codex:}g'
-   grep -rl 'codex:codex-rescue' "$D" --include='*.md' --include='*.mjs' | xargs -r perl -pi -e 's{codex:codex-rescue}{hukuhaka-codex:codex-rescue}g'
-   perl -pi -e 's{Skill\(codex:rescue\)}{Skill(hukuhaka-codex:rescue)}g' "$D/commands/rescue.md"
-   ```
-3. Confirm the only remaining bare `codex:` is the `- codex:` status label in
-   `scripts/lib/render.mjs`, then `node --check` the modified `.mjs` files.
-4. Keep `.claude-plugin/plugin.json`, `NOTICE`, and the four added commands +
-   `codex-plan` skill as-is.
+- Namespace references use `/hukuhaka-codex:*` and
+  `hukuhaka-codex:codex-rescue`.
+- Local commands: `plan`, `review-loop`, `duel`, `debate`, and `full`.
+- Local skill: `codex-plan`; the upstream `gpt-5-4-prompting` guidance is
+  adapted as model-neutral `codex-prompting`.
+- Local hook/runtime behavior: bounded proactive rescue, report-only review,
+  stuck detection, and stale-broker recycling.
+- Selectively adopted after v1.0.4: app-server attestation capability, startup
+  stderr propagation, the v1.0.5 external-agent session importer, and v1.0.6
+  Git shell-expansion hardening.
+- `/hukuhaka-codex:transfer` is a standalone handoff. It is not automatically
+  invoked by `duel`, `debate`, or `full`, which retain independent-solving
+  semantics.
+- `plan` and `full` use the local canonical `codex-plan` contract and a
+  workflow-scoped runtime thread. General prompting guidance no longer owns
+  plan behavior.
+
+Detailed component decisions and compatibility evidence are maintained in the
+private source repository under `docs/hukuhaka-codex/`. Those internal records
+are intentionally not included in the public release mirror.

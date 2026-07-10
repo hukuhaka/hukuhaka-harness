@@ -20,7 +20,12 @@ function defaultState() {
   return {
     version: STATE_VERSION,
     config: {
-      stopReviewGate: false
+      stopReviewGate: false,
+      // When the gate is on, blocking=true BLOCKs the stop on a finding;
+      // blocking=false runs the review but only reports (never blocks).
+      reviewGateBlocking: true,
+      // Opt-in: nudge toward a Codex second opinion after a Bash failure streak.
+      stuckDetector: false
     },
     jobs: []
   };

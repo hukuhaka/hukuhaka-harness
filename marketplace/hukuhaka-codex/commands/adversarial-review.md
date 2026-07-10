@@ -38,7 +38,7 @@ Argument handling:
 - Preserve the user's arguments exactly.
 - Do not strip `--wait` or `--background` yourself.
 - Do not weaken the adversarial framing or rewrite the user's focus text.
-- The companion script parses `--wait` and `--background`, but Claude Code's `Bash(..., run_in_background: true)` is what actually detaches the run.
+- The companion always runs the review in the foreground; `--wait`/`--background` are no-ops at the script level. Claude Code's `Bash(..., run_in_background: true)` is the only thing that actually detaches the run.
 - `/hukuhaka-codex:adversarial-review` uses the same review target selection as `/hukuhaka-codex:review`.
 - It supports working-tree review, branch review, and `--base <ref>`.
 - It does not support `--scope staged` or `--scope unstaged`.

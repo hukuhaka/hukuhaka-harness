@@ -1,114 +1,161 @@
 ---
 name: codex-plan
-description: Internal contract for the plan-then-implement workflow — how to ask Codex (read-only) for a structured implementation plan, and how Claude consumes that plan to implement it
+description: Canonical plan-then-implement contract for obtaining a grounded read-only Codex plan and having Claude implement it with per-step verification
 user-invocable: false
 ---
 
 # Codex Plan -> Claude Implement
 
-Use this skill inside `/hukuhaka-codex:plan` and `/hukuhaka-codex:full`.
+Use this skill inside `/hukuhaka-codex:plan` and the plan phase of
+`/hukuhaka-codex:full`. This file is the single source for the plan prompt,
+thread selection, plan validation, and Claude implementation rules. Commands
+should orchestrate these phases, not duplicate the contract.
 
-The split of labor is fixed:
-- Codex produces the PLAN only. It runs read-only (`task` without `--write`). It never edits files.
-- Claude does the IMPLEMENTATION, following the plan. Claude is the only writer.
+## Fixed division of labor
 
-This keeps Codex's strength (a second model's independent design pass) without
-handing it the working tree, and keeps Claude accountable for every edit.
+- Codex investigates and produces the plan in a read-only `plan` workflow.
+- Claude presents and validates the plan, then implements only after approval.
+- Codex never edits files in this workflow. Never pass `--write`.
+- The plan is advice from a second model, not ground truth.
 
-## Session continuity — default is to KEEP the thread
+## Phase 1: Select the plan thread
 
-Planning is iterative ("refine the plan", "also handle X"), so the default is to
-continue the existing Codex thread for this repo rather than ask every time:
+Planning may continue across Claude sessions, but it must never resume a
+generic rescue, duel, or debate task.
 
-- Before composing the prompt, run
-  `node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task-resume-candidate --json`.
-- If `available` is `true` and the user did NOT pass `--fresh`: continue that
-  thread — pass `--resume-last` to `task` and send only the DELTA instruction
-  (Codex already holds the prior plan + contract). Tell the user in one line that
-  you are continuing it and that `--fresh` starts a new thread. Do NOT use
-  AskUserQuestion to ask continue-vs-new; keeping the thread is the default.
-- If `available` is `false` or the user passed `--fresh`: start a new thread and
-  send the full contract below.
+1. Unless the user passed `--fresh`, run:
 
-The thread lives in Codex (not the Claude session), is scoped to this repo, and
-survives Claude session restarts — so "keep the thread" works across sessions.
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task-resume-candidate --workflow plan --json
+   ```
 
-## Step 1 — Build the plan prompt
+2. If a candidate exists, continue its exact `candidate.threadId` with
+   `--resume-thread <id>`. Tell the user which plan thread is continuing and
+   that `--fresh` starts a new one. Do not ask continue-vs-new.
+3. If no plan candidate exists, or `--fresh` was passed, start a fresh plan
+   thread. Legacy unclassified task threads are not plan candidates.
 
-Compose a single read-only Codex `task` prompt. Use the
-[gpt-5-4-prompting](../gpt-5-4-prompting/SKILL.md) skill to tighten it. The
-prompt MUST forbid edits and MUST request the plan in the contract below.
+## Phase 2: Build the Codex prompt
 
-Recommended block layout (XML tags, per gpt-5-4-prompting conventions):
+For a fresh thread, use the complete contract below. Include only context
+Claude already knows; Codex should inspect the repository itself.
 
-```
+```xml
 <task>
-{the user's goal, plus the relevant files / failure context Claude already knows}
+{the user's concrete goal and the relevant failure or repository context}
 </task>
 
 <role>
-You are producing an implementation PLAN for a separate engineer (Claude) to
-execute. You are read-only. Do NOT edit, create, or delete any files. Do NOT
-run write commands. Investigate the repository as needed, then return the plan.
+Produce an implementation plan for Claude to execute. You are read-only.
+Do not edit, create, rename, or delete files, and do not run write commands.
+Investigate the repository as needed, then return the plan.
 </role>
 
 <structured_output_contract>
-Return exactly these sections, in order:
+Return exactly these sections in order:
 
-1. GOAL — one or two sentences on the end state.
-2. ASSUMPTIONS — anything you inferred that, if wrong, changes the plan.
-3. FILES — each file to create/modify/delete, with a one-line reason. Use exact
-   repo-relative paths.
-4. STEPS — an ordered, numbered list. Each step is a concrete, self-contained
-   change small enough to verify on its own. Reference the file(s) it touches.
-5. RISKS — failure modes, edge cases, and anything easy to get wrong.
-6. VERIFICATION — for each risky step or the plan as a whole, how to prove it
-   works (specific test to write/run, command to execute, or observable check).
-7. OPEN QUESTIONS — high-risk unknowns that should be resolved before building,
-   or "none".
+1. GOAL - one or two sentences describing the verified end state.
+2. ASSUMPTIONS - inferred facts that would materially change the plan if wrong.
+3. FILES - exact repo-relative paths to create, modify, rename, or delete, each
+   with a one-line reason.
+4. STEPS - ordered, concrete changes. Each step names its files and is small
+   enough to verify independently.
+5. RISKS - material failure modes, edge cases, migration concerns, and likely
+   regressions.
+6. VERIFICATION - a specific test, command, or observable check for each risky
+   step and for the completed plan.
+7. OPEN QUESTIONS - only high-risk unknowns that must be resolved before
+   implementation, or "none".
 </structured_output_contract>
 
+<default_follow_through_policy>
+Use the most reasonable low-risk interpretation and keep investigating until
+the plan is implementation-ready. Ask only when missing information changes
+correctness, safety, or an irreversible action.
+</default_follow_through_policy>
+
+<completeness_contract>
+Cover the complete requested behavior, including necessary tests, compatibility
+surfaces, and documentation. Exclude unrelated cleanup and speculative work.
+</completeness_contract>
+
 <grounding_rules>
-Anchor every file path and claim to what you actually observed in the repo. If
-a path or behavior is a guess, mark it as an assumption, do not state it as
-fact.
+Anchor every path and behavioral claim to repository evidence you inspected.
+Label inferences as assumptions. Do not invent files, APIs, or current behavior.
 </grounding_rules>
+
+<missing_context_gating>
+Retrieve missing repository facts with read-only tools. If a high-risk fact
+cannot be established, put it in OPEN QUESTIONS instead of guessing.
+</missing_context_gating>
+
+<verification_loop>
+Before finalizing, check that every step advances the GOAL, every listed file
+exists or is explicitly new, risky behavior has verification, and the plan does
+not require writes from Codex.
+</verification_loop>
+
+<action_safety>
+Keep the plan tightly scoped. Identify destructive or irreversible actions
+explicitly and require user approval before Claude performs them.
+</action_safety>
 ```
 
-Write this prompt to a temp file and pass it with `--prompt-file` (long
-structured prompts do not survive shell quoting as a positional). Do NOT pass
-`--write` — read-only is the whole point.
+For an existing plan thread, send only the user's delta or refinement plus a
+short reminder that the run remains read-only. Do not restate the full contract
+unless the requested direction materially changes it.
 
-## Step 2 — Run Codex read-only
+Write the prompt to a temporary file. Long structured prompts must use
+`--prompt-file`; do not pass them through positional shell quoting.
+
+## Phase 3: Run Codex read-only
+
+Fresh plan:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task --prompt-file <tmp> [--model <m>] [--effort <e>]
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task --workflow plan --prompt-file <tmp> [--model <m>] [--effort <e>]
 ```
 
-Return Codex's plan to the user verbatim first, before any implementation. The
-plan is a deliverable on its own — the user may want to adjust it.
+Continued plan:
 
-## Step 3 — Implement the plan (Claude)
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/scripts/codex-companion.mjs" task --workflow plan --resume-thread <thread-id> --prompt-file <tmp> [--model <m>] [--effort <e>]
+```
 
-Once the user approves the plan (or asked for end-to-end build), Claude
-implements it directly. Rules:
+Preserve the returned thread ID. Do not use generic `--resume-last` for plans.
 
-- Follow the plan's STEPS in order. Implement each step, then run its
-  VERIFICATION before moving on.
-- The plan is advice from another model, not ground truth. If a step is wrong,
-  unsafe, or contradicts the actual code, STOP and surface the disagreement to
-  the user — do not silently "fix" the plan or blindly follow it off a cliff.
-- If the plan listed OPEN QUESTIONS, resolve them (ask the user or investigate)
-  before building the dependent steps.
-- Stay within the plan's scope. Do not bolt on unrelated refactors.
-- Preserve the plan's exact file paths; if reality differs, say so.
-- Report at the end: which steps were implemented, which verifications passed,
-  and any deviation from the plan and why.
+## Phase 4: Validate and present the plan
+
+Before implementation, check that the response contains all seven required
+sections, uses concrete paths, separates assumptions from observed facts, and
+provides meaningful verification. If the response is malformed or incomplete:
+
+1. send one concise correction request to the same exact plan thread;
+2. ask only for the missing or invalid sections;
+3. stop and report failure if the corrected response is still unusable.
+
+Present the usable Codex plan verbatim before adding Claude's assessment. Do
+not silently rewrite it into a Claude-authored plan.
+
+## Phase 5: Approval and implementation
+
+- If the user requested `--plan-only`, stop after presenting the plan.
+- If the user already requested end-to-end implementation, proceed.
+- Otherwise ask once whether to implement the plan.
+- Resolve OPEN QUESTIONS before their dependent steps.
+- Implement STEPS in order and run each step's VERIFICATION before continuing.
+- Re-check the actual code before every edit. If the plan is wrong, unsafe, or
+  stale, stop and surface the disagreement; do not blindly follow or silently
+  repair it.
+- Preserve scope, not mistaken paths. If reality differs from the plan, explain
+  the deviation and use the correct path only after establishing evidence.
+- Report implemented steps, passed checks, deviations, and residual risk.
 
 ## Failure handling
 
-- If Codex was never successfully invoked, or returned no usable plan, report
-  that and stop. Do NOT substitute a Claude-authored plan silently — tell the
-  user Codex failed and offer to plan it yourself as an explicit fallback.
-- If Codex reports that setup or authentication is required, direct the user to
+- If Codex was not invoked or returned no usable plan after one correction
+  attempt, report the failure and stop.
+- Offer a Claude-authored plan only as an explicit fallback; never substitute
+  one silently.
+- If setup or authentication is required, direct the user to
   `/hukuhaka-codex:setup`.

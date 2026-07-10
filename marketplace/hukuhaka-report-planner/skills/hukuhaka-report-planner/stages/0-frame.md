@@ -1,6 +1,6 @@
 ---
 stage: 0
-purpose: turn a natural-language request into a light, confirmed Frame (purpose / audience / prose level / design direction; form optional) — the shaping inputs the plan is built on
+purpose: turn a natural-language request into a light, confirmed Frame (purpose / audience / prose level / design direction; build preferences + form optional) — the shaping inputs the plan is built on
 prereq: user issued a report-shaped request
 deliverable: .claude/reports/tmp-draft/spec.md created with ONLY the Frame block
 verification_gate: user confirms/edits the Frame in one exchange
@@ -13,7 +13,7 @@ The entry is a sentence — "이 실험 결과 report로 만들고 싶어", "wri
 the material, then a proposed Frame for confirmation**. This is light — one short exchange,
 not a gated interrogation. The deeper read and the figure/section proposal are Stage 1.
 
-The Frame is four lines (plus optional `form`). It is deliberately small: no mode, no
+The Frame is four required lines (plus optional `build preferences` and `form`). It is deliberately small: no mode, no
 register, no axis table. Just enough shaping that the Stage-1 plan is grounded, and the
 user's two biggest levers — **prose level** (how much explanatory text) and **design
 direction** (the taste/look) — are captured before any structure is proposed.
@@ -37,6 +37,9 @@ direction** (the taste/look) — are captured before any structure is proposed.
      strategy, optionally a reference look (e.g. `cool-neutral, pure-white canvas, single
      electric-blue accent` or `warm editorial, cream paper`). The taste lever. If the user
      has previously rejected a look (e.g. warm/yellowish), never re-propose it.
+   - **build preferences** (optional) — 1-3 soft heuristics in `prefer X over Y` language,
+     only when they clarify likely build drift. Example: `prefer one accent hue with
+     lightness/saturation variation over many unrelated hues`.
    - **form** (optional) — web doc / deck / print PDF. Omit if undecided; it can be set later.
 
 4. **GATE** — show the Frame, ask: "이대로 갈까요, 아니면 한 줄씩 고쳐주세요." One exchange;
@@ -58,6 +61,7 @@ FRAME confirmed:
   audience:         <one line>
   prose level:      <brief | full>
   design direction: <one line>
+  build preferences:<prefer X over Y; ...>       (optional)
   form:             <web doc | deck | print>   (optional)
 SPEC: .claude/reports/tmp-draft/spec.md created (Frame block only)
 ```

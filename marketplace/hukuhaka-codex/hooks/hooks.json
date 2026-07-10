@@ -1,6 +1,18 @@
 {
-  "description": "Optional stop-time review gate for Codex Companion.",
+  "description": "Optional stop-time review gate and opt-in stuck-detector for Codex Companion.",
   "hooks": {
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/stuck-detector-hook.mjs\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "hooks": [

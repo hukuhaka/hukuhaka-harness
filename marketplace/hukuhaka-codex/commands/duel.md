@@ -16,7 +16,7 @@ Steps:
 
 1. If no problem was supplied, ask for it. Stop until you have it.
 2. **Claude's pass — first and independent.** Before consulting Codex, form your own solution: the approach, the key decisions, and the concrete changes you would make. Write it down so it is not contaminated by Codex's answer. Do NOT implement yet.
-3. **Codex's pass — independent.** Compose a read-only prompt asking Codex to solve the SAME problem and return its approach as a concrete plan (goal, files, steps, risks) — explicitly forbidding edits. Tighten it with `gpt-5-4-prompting`. Write it to a temp file and run:
+3. **Codex's pass — independent.** Compose a read-only prompt asking Codex to solve the SAME problem and return its approach as a concrete plan (goal, files, steps, risks) — explicitly forbidding edits. Tighten it with `codex-prompting`. Write it to a temp file and run:
 ```bash
 PF=$(mktemp); cat > "$PF" <<'PROMPT'
 ... composed solve prompt (read-only, return approach + concrete steps) ...

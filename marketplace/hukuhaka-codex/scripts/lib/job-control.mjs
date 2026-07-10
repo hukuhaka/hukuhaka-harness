@@ -12,6 +12,19 @@ export function sortJobsNewestFirst(jobs) {
   return [...jobs].sort((left, right) => String(right.updatedAt ?? "").localeCompare(String(left.updatedAt ?? "")));
 }
 
+export function findLatestResumableTaskJob(jobs, workflow = "task") {
+  return (
+    jobs.find(
+      (job) =>
+        job.jobClass === "task" &&
+        (job.workflow ?? "task") === workflow &&
+        job.threadId &&
+        job.status !== "queued" &&
+        job.status !== "running"
+    ) ?? null
+  );
+}
+
 function getCurrentSessionId(options = {}) {
   return options.env?.[SESSION_ID_ENV] ?? process.env[SESSION_ID_ENV] ?? null;
 }

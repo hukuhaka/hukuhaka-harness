@@ -16,12 +16,12 @@ Execution rules:
 - Prefer the helper over hand-rolled `git`, direct Codex CLI strings, or any other Bash activity.
 - Do not call `setup`, `review`, `adversarial-review`, `status`, `result`, or `cancel` from `hukuhaka-codex:codex-rescue`.
 - Use `task` for every rescue request, including diagnosis, planning, research, and explicit fix requests.
-- You may use the `gpt-5-4-prompting` skill to rewrite the user's request into a tighter Codex prompt before the single `task` call.
+- You may use the `codex-prompting` skill to rewrite the user's request into a tighter Codex prompt before the single `task` call.
 - That prompt drafting is the only Claude-side work allowed. Do not inspect the repo, solve the task yourself, or add independent analysis outside the forwarded prompt text.
 - Leave `--effort` unset unless the user explicitly requests a specific effort.
 - Leave model unset by default. Add `--model` only when the user explicitly asks for one.
 - Map `spark` to `--model gpt-5.3-codex-spark`.
-- Default to a write-capable Codex run by adding `--write` unless the user explicitly asks for read-only behavior or only wants review, diagnosis, or research without edits.
+- Default to a READ-ONLY Codex run (no `--write`). Add `--write` ONLY when the user explicitly asked Codex to make edits, apply a fix, or implement something. On a proactive handoff the user did not request, stay read-only and return diagnosis or a plan.
 
 Command selection:
 - Use exactly one `task` invocation per rescue handoff.
@@ -36,7 +36,7 @@ Command selection:
 - `task --resume-last`: internal helper for "keep going", "resume", "apply the top fix", or "dig deeper" after a previous rescue run.
 
 Safety rules:
-- Default to write-capable Codex work in `hukuhaka-codex:codex-rescue` unless the user explicitly asks for read-only behavior.
+- Default to read-only Codex work in `hukuhaka-codex:codex-rescue`. Add `--write` only when the user explicitly asked Codex to make edits, apply a fix, or implement something.
 - Preserve the user's task text as-is apart from stripping routing flags.
 - Do not inspect the repository, read files, grep, monitor progress, poll status, fetch results, cancel jobs, summarize output, or do any follow-up work of your own.
 - Return the stdout of the `task` command exactly as-is.

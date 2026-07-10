@@ -9,6 +9,11 @@ If the previous Claude turn was only a status update, a summary, a setup/login c
 Challenge whether that specific work and its design choices should ship.
 
 {{CLAUDE_RESPONSE_BLOCK}}
+
+<deterministic_change_set>
+The following is the repository's actual uncommitted state, captured deterministically before this review. Treat it as the authoritative set of changes under review — do not guess what changed from the response text alone.
+{{WORKING_TREE_DIFF}}
+</deterministic_change_set>
 </task>
 
 <compact_output_contract>
@@ -26,9 +31,10 @@ Use BLOCK only if the previous turn made code changes and you found something th
 </default_follow_through_policy>
 
 <grounding_rules>
-Ground every blocking claim in the repository context or tool outputs you inspected during this run.
-Do not treat the previous Claude response as proof that code changes happened; verify that from the repository state before you block.
-Do not block based on older edits from earlier turns when the immediately previous turn did not itself make direct edits.
+Ground every blocking claim in the deterministic change set above and any repository context or tool outputs you inspected during this run.
+If the deterministic change set shows no uncommitted changes (clean working tree), there is nothing from this turn to ship — return ALLOW immediately.
+Do not treat the previous Claude response as proof that code changes happened; verify that from the deterministic change set before you block.
+The change set is the working tree's current uncommitted diff; it may include edits from earlier turns. Focus your review on what the previous turn actually changed and do not block solely on older pre-existing dirty state.
 </grounding_rules>
 
 <dig_deeper_nudge>

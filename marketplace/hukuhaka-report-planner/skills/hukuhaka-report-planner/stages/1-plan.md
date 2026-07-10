@@ -33,9 +33,10 @@ The skill ends here. Building the HTML is a separate, unconstrained step (see Ha
 
 ### 1a — Deep read + figure inventory
 
-1. **Re-read the Frame.** `prose level` and `design direction` shape what you propose:
-   `brief` → lean harder on figures, minimal prose notes; `full` → sections carry
-   explanatory text too.
+1. **Re-read the Frame.** `prose level`, `design direction`, and any optional
+   `build preferences` shape what you propose: `brief` → lean harder on figures, minimal
+   prose notes; `full` → sections carry explanatory text too. Treat build preferences as
+   soft defaults, not gates.
 
 2. **Read the material deeply** — the experiment results / code / data / findings — enough to
    know what it actually contains and what each part can support. Confirm named entities you
@@ -74,6 +75,7 @@ The skill ends here. Building the HTML is a separate, unconstrained step (see Ha
    - "좋은데 02에 메모리 그래프 추가" → add that figure to section 02
    - "03이랑 04 합쳐" / "Setup은 빼" → restructure
    - "디자인은 더 차갑게" → update `design direction`
+   - "색은 한 계열 안에서 가자" → add/update `build preferences`
    Iterate until the user is satisfied. There is no fixed round limit and no fail-closed gate.
 
 7. **Record the plan.** On confirm:

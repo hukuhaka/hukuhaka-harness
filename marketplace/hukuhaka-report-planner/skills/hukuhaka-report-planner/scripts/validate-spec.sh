@@ -29,7 +29,7 @@ fi
 ERRORS=0
 fail(){ echo "FAIL: $1"; ERRORS=$((ERRORS+1)); }
 
-# Contract: the four REQUIRED Frame lines (form is optional).
+# Contract: the four REQUIRED Frame lines (build preferences and form are optional).
 FRAME_FIELDS=( "purpose" "audience" "prose level" "design direction" )
 
 has_block(){ printf '%s\n' "$SPEC" | grep -Eq "^## $1"; }

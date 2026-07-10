@@ -1,6 +1,6 @@
 ---
 name: hukuhaka-report-planner
-description: "Plan a report before building it: look at the material, propose the concrete figures it needs (timing diagram, diff table, KPI strip, bar chart, hand-authored diagram, code block), propose a section/tab outline that carries them (01 Overview · 02 … · 03 …), refine with the user, and record the plan to spec.md. Captures the user's levers — purpose, audience, prose level (brief vs full), design direction (the look/taste, to avoid generic-AI output) — without imposing a rigid pipeline. Triggers — ANY of: report, writeup, summary, audit, benchmark, comparison, analysis, brief, deck, dashboard, slides, presentation, poster, memo, postmortem, retrospective, scorecard, recap, overview, findings, evaluation, review, walkthrough, handbook, explainer, technical writeup, executive summary, status update, incident report, code structure doc, project flow doc. Output: a recorded plan (spec.md) — NOT the built HTML. Building is a separate, unconstrained step the user runs afterward (e.g. hand the plan to hallmark / frontend-design). Skip when: the user wants the artifact built immediately with no planning, a long-form essay, blog post, marketing copy, API reference, or changelog list."
+description: "Plan a report before building it: look at the material, propose the concrete figures it needs (timing diagram, diff table, KPI strip, bar chart, hand-authored diagram, code block), propose a section/tab outline that carries them (01 Overview · 02 … · 03 …), refine with the user, and record the plan to spec.md. Captures the user's levers — purpose, audience, prose level (brief vs full), design direction (the look/taste, to avoid generic-AI output), optional build preferences — without imposing a rigid pipeline. Triggers — ANY of: report, writeup, summary, audit, benchmark, comparison, analysis, brief, deck, dashboard, slides, presentation, poster, memo, postmortem, retrospective, scorecard, recap, overview, findings, evaluation, review, walkthrough, handbook, explainer, technical writeup, executive summary, status update, incident report, code structure doc, project flow doc. Output: a recorded plan (spec.md) — NOT the built HTML. Building is a separate, unconstrained step the user runs afterward (e.g. hand the plan to hallmark / frontend-design). Skip when: the user wants the artifact built immediately with no planning, a long-form essay, blog post, marketing copy, API reference, or changelog list."
 ---
 
 This skill **plans** a report — it does not build it. The job is to look at the material,
@@ -20,7 +20,7 @@ Two stages. Open the stage file BEFORE executing it; do not work from memory.
 
 | # | File | Purpose | Verification gate |
 |---|---|---|---|
-| 0 | `stages/0-frame.md` | Brief look → propose a light Frame (purpose / audience / prose level / design direction; form optional); spec.md born at `.claude/reports/tmp-draft/` | User confirms/edits the Frame in one exchange |
+| 0 | `stages/0-frame.md` | Brief look → propose a light Frame (purpose / audience / prose level / design direction; build preferences + form optional); spec.md born at `.claude/reports/tmp-draft/` | User confirms/edits the Frame in one exchange |
 | 1 | `stages/1-plan.md` | Read deeply → propose the figure inventory + section/tab outline → refine with the user → record spec.md → hand off | User confirms the figures + outline; then the skill stops (build is a separate turn) |
 
 The skill **ends when the plan is recorded.** It does not produce `report.html`, screenshots,
@@ -46,6 +46,9 @@ figures). No build log, no provenance tags, no axis table.
 - **Design direction** — one line of visual intent (palette temperature, canvas, accent
   strategy, optional reference look). The taste lever, captured so the eventual build does
   not fall back to the generic-AI / warm-yellowish look the user rejects. Not a token sheet.
+- **Build preferences** — optional soft heuristics in "prefer X over Y" language. These
+  guide the builder away from generic defaults without becoming CSS tokens, fixed components,
+  or mandatory visual rules.
 - **Figure inventory** — the concrete figures the *material* calls for, derived from the
   shape of the data (a metric over an ordered axis → line; a trace over time → timing diagram;
   before/after → diff table; ranking → bar; structure → hand-authored diagram). The center of
@@ -66,6 +69,9 @@ handoff so whoever builds (hallmark / frontend-design / a normal turn) honors th
   and equal-weight flat hierarchy.
 - `font-variant-numeric: tabular-nums` on metrics; font chains end in a generic family.
 - The `design direction` line governs palette/canvas/accent — hold the whole document to it.
+- If `build preferences` are present, treat them as soft defaults. Prefer one accent hue with
+  lightness/saturation variation over many unrelated hues; add hues when they carry semantic
+  meaning.
 
 ## Implementation Notes
 

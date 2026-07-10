@@ -126,6 +126,23 @@ else
     fail "skeleton-golden — $(tail -3 /tmp/skeleton-golden.log | tr '\n' ' ')"
 fi
 
+# ── 5. Codex runtime tests ──────────────────────────────────────────
+
+CODEX_TESTS=(
+    "$REPO_DIR/eval/static-checks/hukuhaka-codex-broker.test.mjs"
+    "$REPO_DIR/eval/static-checks/hukuhaka-codex-prompting.test.mjs"
+    "$REPO_DIR/eval/static-checks/hukuhaka-codex-transfer.test.mjs"
+)
+
+echo ""
+echo "Codex runtime:"
+
+if node --test "${CODEX_TESTS[@]}" > /tmp/hukuhaka-codex-runtime-test.log 2>&1; then
+    pass "broker lifecycle + prompting workflows + session transfer"
+else
+    fail "Codex runtime tests — $(tail -3 /tmp/hukuhaka-codex-runtime-test.log | tr '\n' ' ')"
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────
 
 echo ""

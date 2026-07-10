@@ -32,6 +32,7 @@ const DEFAULT_CLIENT_INFO = {
 /** @type {InitializeCapabilities} */
 const DEFAULT_CAPABILITIES = {
   experimentalApi: false,
+  requestAttestation: false,
   optOutNotificationMethods: [
     "item/agentMessage/delta",
     "item/reasoning/summaryTextDelta",
@@ -206,10 +207,13 @@ class SpawnedCodexAppServerClient extends AppServerClientBase {
     });
 
     this.proc.on("exit", (code, signal) => {
+      const stderr = this.stderr.trim();
       const detail =
         code === 0
           ? null
-          : createProtocolError(`codex app-server exited unexpectedly (${signal ? `signal ${signal}` : `exit ${code}`}).`);
+          : createProtocolError(
+              `codex app-server exited unexpectedly (${signal ? `signal ${signal}` : `exit ${code}`}).${stderr ? `\n${stderr}` : ""}`
+            );
       this.handleExit(detail);
     });
 
@@ -333,10 +337,8 @@ export class CodexAppServerClient {
     let brokerEndpoint = null;
     if (!options.disableBroker) {
       brokerEndpoint = options.brokerEndpoint ?? options.env?.[BROKER_ENDPOINT_ENV] ?? process.env[BROKER_ENDPOINT_ENV] ?? null;
-      if (!brokerEndpoint && options.reuseExistingBroker) {
-        brokerEndpoint = loadBrokerSession(cwd)?.endpoint ?? null;
-      }
-      if (!brokerEndpoint && !options.reuseExistingBroker) {
+      const existingBroker = !brokerEndpoint && options.reuseExistingBroker ? loadBrokerSession(cwd) : null;
+      if (!brokerEndpoint && (existingBroker || !options.reuseExistingBroker)) {
         const brokerSession = await ensureBrokerSession(cwd, { env: options.env });
         brokerEndpoint = brokerSession?.endpoint ?? null;
       }

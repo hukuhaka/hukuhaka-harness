@@ -45,14 +45,48 @@ function filterJobsForCurrentSession(jobs, input = {}) {
   return jobs.filter((job) => job.sessionId === sessionId);
 }
 
-function buildStopReviewPrompt(input = {}) {
+function getWorkingTreeDiff(cwd) {
+  // Deterministic baseline for the stop review: the actual uncommitted change
+  // set, computed here rather than left for Codex to infer from the repo. Codex
+  // cannot reliably tell "edits from this turn" apart from older dirty state by
+  // inspection alone, so we hand it the real working-tree diff. Best-effort:
+  // returns "" outside a git repo or on any failure (the review then degrades to
+  // the previous infer-from-repo behavior instead of breaking).
+  const run = (args) => {
+    try {
+      const out = spawnSync("git", args, { cwd, encoding: "utf8", timeout: 5000 });
+      return out.status === 0 ? String(out.stdout ?? "").trim() : "";
+    } catch {
+      return "";
+    }
+  };
+  const status = run(["status", "--porcelain"]);
+  if (!status) {
+    return "";
+  }
+  const diffstat = run(["diff", "--stat"]);
+  const sections = [
+    "Working-tree status (git status --porcelain):",
+    status,
+    diffstat ? "\nChanged files (git diff --stat):" : "",
+    diffstat
+  ].filter(Boolean);
+  return sections.join("\n");
+}
+
+function buildStopReviewPrompt(input = {}, cwd = process.cwd()) {
   const lastAssistantMessage = String(input.last_assistant_message ?? "").trim();
   const template = loadPromptTemplate(ROOT_DIR, "stop-review-gate");
   const claudeResponseBlock = lastAssistantMessage
     ? ["Previous Claude response:", lastAssistantMessage].join("\n")
     : "";
+  const workingTreeDiff = getWorkingTreeDiff(cwd);
+  const workingTreeBlock = workingTreeDiff
+    ? ["Current uncommitted changes in the repository:", workingTreeDiff].join("\n")
+    : "No uncommitted changes are present in the working tree.";
   return interpolateTemplate(template, {
-    CLAUDE_RESPONSE_BLOCK: claudeResponseBlock
+    CLAUDE_RESPONSE_BLOCK: claudeResponseBlock,
+    WORKING_TREE_DIFF: workingTreeBlock
   });
 }
 
@@ -97,7 +131,7 @@ function parseStopReviewOutput(rawOutput) {
 
 function runStopReview(cwd, input = {}) {
   const scriptPath = path.join(SCRIPT_DIR, "codex-companion.mjs");
-  const prompt = buildStopReviewPrompt(input);
+  const prompt = buildStopReviewPrompt(input, cwd);
   const childEnv = {
     ...process.env,
     ...(input.session_id ? { [SESSION_ID_ENV]: input.session_id } : {})
@@ -164,10 +198,21 @@ function main() {
   }
 
   const review = runStopReview(cwd, input);
+  // reviewGateBlocking defaults to true (block on a finding). In report-only
+  // mode it runs the same review but never blocks — the finding is surfaced as
+  // a non-blocking note and Claude is free to stop. (Latency is still paid at
+  // stop time; a fully async no-wait variant is a separate follow-up.)
+  const blocking = config.reviewGateBlocking !== false;
   if (!review.ok) {
+    if (blocking) {
+      emitDecision({
+        decision: "block",
+        reason: runningTaskNote ? `${runningTaskNote} ${review.reason}` : review.reason
+      });
+      return;
+    }
     emitDecision({
-      decision: "block",
-      reason: runningTaskNote ? `${runningTaskNote} ${review.reason}` : review.reason
+      systemMessage: runningTaskNote ? `${runningTaskNote}\n${review.reason}` : review.reason
     });
     return;
   }

@@ -1,12 +1,14 @@
 ---
-name: gpt-5-4-prompting
-description: Internal guidance for composing Codex and GPT-5.4 prompts for coding, review, diagnosis, and research tasks inside the Codex Claude Code plugin
+name: codex-prompting
+description: Internal guidance for composing compact, grounded Codex task prompts for rescue, independent solving, debate, diagnosis, and research
 user-invocable: false
 ---
 
-# GPT-5.4 Prompting
+# Codex Prompting
 
-Use this skill when `hukuhaka-codex:codex-rescue` needs to ask Codex or another GPT-5.4-based workflow for help.
+Use this skill when `hukuhaka-codex:codex-rescue`, `duel`, or `debate` needs
+to compose a general Codex task prompt. Do not use it for `plan` or `full`;
+their canonical prompt and consumption contract lives in `codex-plan`.
 
 Prompt Codex like an operator, not a collaborator. Keep prompts compact and block-structured with XML tags. State the task, the output contract, the follow-through defaults, and the small set of extra constraints that matter.
 

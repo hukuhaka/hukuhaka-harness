@@ -6,6 +6,23 @@ All notable changes to hukuhaka-claude are documented here. The project follows
 Plugin versions (`marketplace/<plugin>/.claude-plugin/plugin.json`) are
 independent — see those files for their own history.
 
+## [1.0.10] — 2026-07-10
+
+### Changed
+
+- **`hukuhaka-codex@0.4.0`** — replaced model-specific GPT-5.4 prompt guidance
+  with `codex-prompting`, strengthened the canonical `codex-plan` workflow,
+  and isolated resumable plan threads from unrelated Codex tasks.
+- **`hukuhaka-codex@0.3.0`** — added `/hukuhaka-codex:transfer` to move the
+  current Claude Code transcript into a persistent, resumable Codex thread.
+- **`hukuhaka-codex@0.2.0`** — clarified its Apache-2.0 fork provenance,
+  established independent upstream tracking, and hardened Git subprocess
+  execution. Added `/debate` plus opt-in, read-only proactive review and stuck
+  diagnosis. Brokers now restart automatically when the installed Codex CLI
+  version changes, preventing stale app-server compatibility failures.
+- **`hukuhaka-report-planner@0.2.0`** — added optional build preferences as
+  soft `prefer X over Y` guidance carried from framing into the recorded plan.
+
 ## [1.0.9] — 2026-06-25
 
 ### Added

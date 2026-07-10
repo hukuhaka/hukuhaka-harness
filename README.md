@@ -15,8 +15,8 @@ Claude Code plugins for **spec-first development** — keep a codebase's documen
 | **hukuhaka-project-mapper** | `1.1.2` | Commands + agents that generate and maintain `.claude/{map,design,backlog,changelog,spec}.md` from your codebase. Init, scan, sync, summarize, compact, clean. |
 | **hukuhaka-ltm** | `0.5.0` | Long-term memory plugin with three-tier storage (L1 pinned, L2 indexed cards, L3 raw log). Autonomous L3 append via `<ltm-record>` markers parsed by the Stop hook; batch L2 distillation via `/hukuhaka-ltm:ltm-distill`. |
 | **hukuhaka-team** | — | Team lead orchestrator skill. Coordinates 3-5 teammates with distinct file ownership; lead reviews and decides without implementing. |
-| **hukuhaka-report-planner** | `0.2.0` | Report planner — looks at the material, proposes the concrete figures it needs (timing diagram, diff table, KPI strip, chart, hand-authored diagram) plus a section/tab outline, and captures the user's levers (purpose, audience, prose level, design direction) into a recorded plan (`spec.md`). Plans, does not build — building is a separate, unconstrained step driven by the plan. |
-| **hukuhaka-codex** | `0.1.0` | Codex + Claude collaboration harness (Apache-2.0 fork of OpenAI's codex plugin). Adds `plan` (Codex drafts a read-only implementation plan, Claude builds it), `review-loop` (Codex challenges, Claude hardens, repeat), `duel` (both solve independently, Claude synthesizes), and `full` (plan → build → review loop) on top of the unmodified Codex runtime. |
+| **hukuhaka-report-planner** | `0.2.0` | Report planner — looks at the material, proposes the concrete figures it needs (timing diagram, diff table, KPI strip, chart, hand-authored diagram) plus a section/tab outline, and captures the user's levers (purpose, audience, prose level, design direction, optional build preferences) into a recorded plan (`spec.md`). Plans, does not build — building is a separate, unconstrained step driven by the plan. |
+| **hukuhaka-codex** | `0.4.0` | Codex + Claude collaboration harness (Apache-2.0 fork of OpenAI's codex plugin). Adds grounded plan-then-implement, review, debate, full-loop orchestration, and Claude-to-Codex session transfer on top of the adapted Codex runtime. |
 | **CLAUDE.md template** | — | Spec-first router for `~/.claude/CLAUDE.md`: *Approach* / *Rules* / *Reference* structure with explicit decision-proposal format. |
 
 Optional third-party extras (rtk, ccstatusline, agent-teams flag) ride along with the installer.
@@ -83,4 +83,6 @@ The installer's preflight check enumerates these per selected component and offe
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+This repository is MIT-licensed except for `marketplace/hukuhaka-codex`, an
+Apache-2.0 derivative of OpenAI's Codex plugin for Claude Code. See the root
+[LICENSE](LICENSE) and the plugin's `LICENSE` and `NOTICE` files.

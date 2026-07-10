@@ -1,8 +1,8 @@
 # Codex Prompt Recipes
 
-Use these as starting templates for Codex task prompts or other Codex/GPT-5.4 prompt construction.
+Use these as starting templates for general Codex task prompts.
 Copy the smallest recipe that fits the task, then trim anything you do not need.
-In `hukuhaka-codex:codex-rescue`, run diagnosis and fix-oriented recipes in write mode by default unless the user explicitly asked for read-only behavior.
+In `hukuhaka-codex:codex-rescue`, run recipes READ-ONLY by default (no `--write`). Add `--write` only when the user explicitly asked Codex to make edits, apply a fix, or implement something; a proactive handoff the user did not request stays read-only.
 
 ## Diagnosis
 
@@ -128,7 +128,7 @@ Prefer primary sources.
 
 ```xml
 <task>
-Diagnose why this existing prompt is underperforming and propose the smallest high-leverage changes to improve it for Codex or GPT-5.4.
+Diagnose why this existing prompt is underperforming and propose the smallest high-leverage changes to improve it for Codex.
 </task>
 
 <structured_output_contract>
