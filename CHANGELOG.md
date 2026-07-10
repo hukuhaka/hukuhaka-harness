@@ -8,6 +8,11 @@ independent — see those files for their own history.
 
 ## [1.0.10] — 2026-07-10
 
+### Fixed
+
+- Public checkout validation now skips private-only Codex runtime tests when
+  their complete harness is intentionally absent from the release mirror.
+
 ### Changed
 
 - **`hukuhaka-codex@0.4.0`** — replaced model-specific GPT-5.4 prompt guidance

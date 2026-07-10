@@ -137,7 +137,22 @@ CODEX_TESTS=(
 echo ""
 echo "Codex runtime:"
 
-if node --test "${CODEX_TESTS[@]}" > /tmp/hukuhaka-codex-runtime-test.log 2>&1; then
+codex_tests_present=0
+codex_tests_missing=""
+for test_file in "${CODEX_TESTS[@]}"; do
+    if [ -f "$test_file" ]; then
+        codex_tests_present=$((codex_tests_present+1))
+    else
+        test_name=$(basename "$test_file")
+        codex_tests_missing="${codex_tests_missing:+$codex_tests_missing, }$test_name"
+    fi
+done
+
+if [ "$codex_tests_present" -eq 0 ]; then
+    echo "  [skip] Codex runtime tests (private harness not present in this checkout)"
+elif [ "$codex_tests_present" -ne "${#CODEX_TESTS[@]}" ]; then
+    fail "Codex runtime tests — incomplete private harness; missing: $codex_tests_missing"
+elif node --test "${CODEX_TESTS[@]}" > /tmp/hukuhaka-codex-runtime-test.log 2>&1; then
     pass "broker lifecycle + prompting workflows + session transfer"
 else
     fail "Codex runtime tests — $(tail -3 /tmp/hukuhaka-codex-runtime-test.log | tr '\n' ' ')"
