@@ -115,8 +115,12 @@ def load_preflight(path, item_names):
     try:
         with open(path) as f:
             data = json.load(f)
-    except Exception:
-        return {}, {}
+    except (OSError, json.JSONDecodeError) as exc:
+        print("invalid preflight data: {}".format(exc), file=sys.stderr)
+        raise SystemExit(2)
+    if not isinstance(data, dict) or not isinstance(data.get("requirements", []), list):
+        print("invalid preflight data: expected a requirements array", file=sys.stderr)
+        raise SystemExit(2)
     host_status = {}
     component_reqs = {}
     name_set = set(item_names)
@@ -269,7 +273,7 @@ def main():
 
         if host_status:
             # Display host capability summary in a fixed order — most useful first.
-            order = ["python3", "bash", "curl", "tar", "jq", "git", "whiptail"]
+            order = ["python3", "bash", "curl", "git", "codex", "npx", "whiptail"]
             present = [n for n in order if n in host_status]
             extras = [n for n in host_status if n not in order]
             parts = []

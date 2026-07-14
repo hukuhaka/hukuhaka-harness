@@ -7,7 +7,25 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
-## Unreleased
+## [1.0.12] — 2026-07-14
+
+### Changed
+
+- Reworked the macOS/Linux installer around a Python 3.9+ standard-library
+  runtime shared by Claude Code and Codex. Claude deployment now validates
+  state before mutation, writes registries atomically, detects managed-file
+  drift, and recovers or rolls back interrupted installs.
+- Clarified the runtime support contract: Python 2 and native Windows are not
+  supported, and dependency installation runs only with explicit opt-in.
+
+### Fixed
+
+- Fixed Claude upgrades failing when a removed plugin's cache or install
+  directory was already absent. Partial legacy state now converges safely on
+  reinstall.
+- Made optional-extras dry runs non-mutating, rejected malformed Claude
+  settings before changes, and stopped core uninstall from deleting independently
+  managed statusline state.
 
 ## [1.0.11] — 2026-07-14
 

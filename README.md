@@ -29,6 +29,26 @@ interactive flow asks for the target host before component selection. Explicit
 non-interactive operations that omit `--host` still target Claude Code for
 backward compatibility.
 
+### Requirements and support
+
+| Requirement | Support contract |
+|-------------|------------------|
+| Operating system | macOS or Linux |
+| Python | Python 3.9+ available as `python3`; Python 2 is unsupported |
+| Bootstrap | `bash` and `curl` for remote installation |
+| Codex host | `codex` CLI |
+| Windows | Native Windows is unsupported; WSL is not yet part of the tested matrix |
+
+The installer uses only the Python standard library. If `python3` is missing,
+the bootstrap prints the appropriate package-manager command; it executes that
+command only when `--auto-install-deps` is explicitly supplied.
+
+Claude Code deployment is transactional: registry JSON is validated before
+files change, writes are atomic, interrupted runs are recovered on the next
+install, and locally modified managed files require an explicit `--force`.
+Optional extras are kept outside the core manifest and are never removed by a
+core uninstall.
+
 ### Interactive install
 
 ```bash
@@ -106,7 +126,7 @@ artifact requests use it as a preflight and continue building.
 
 | | Required | Optional |
 |--|----------|----------|
-| **Base** | `python3`, `curl`, `tar` | `git` |
+| **Base** | Python 3.9+ (`python3`), `bash`; `curl` for remote bootstrap | `git` |
 | **Codex host** | `codex` | — |
 | **Extras** | — | `brew` (rtk on macOS), `node`/`npx` (ccstatusline) |
 

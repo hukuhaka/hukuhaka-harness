@@ -127,6 +127,49 @@ fi
 echo ""
 echo "Host support:"
 
+if PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+    -s "$SCRIPT_DIR/tests" -p 'test_*.py' > "$VALIDATE_TMP/installer-tests.log" 2>&1; then
+    pass "transactional installer state, rollback, drift, and recovery"
+else
+    fail "installer unit tests — $(tail -8 "$VALIDATE_TMP/installer-tests.log" | tr '\n' ' ')"
+fi
+
+extras_home="$VALIDATE_TMP/extras-home"
+mkdir -p "$extras_home/.claude"
+printf '#!/bin/sh\n' > "$extras_home/.claude/statusline.sh"
+printf '{"statusLine":{"command":"%s/.claude/statusline.sh"}}\n' "$extras_home" \
+    > "$extras_home/.claude/settings.json"
+extras_before=$(python3 - "$extras_home/.claude" <<'PY'
+import hashlib, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+for name in ("settings.json", "statusline.sh"):
+    print(hashlib.sha256((root / name).read_bytes()).hexdigest())
+PY
+)
+if HOME="$extras_home" "$SCRIPT_DIR/install_helper.sh" --none --dry-run \
+       > "$VALIDATE_TMP/extras-dry-run.log" 2>&1 && \
+   [ -f "$extras_home/.claude/statusline.sh" ] && \
+   [ "$extras_before" = "$(python3 - "$extras_home/.claude" <<'PY'
+import hashlib, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+for name in ("settings.json", "statusline.sh"):
+    print(hashlib.sha256((root / name).read_bytes()).hexdigest())
+PY
+)" ]; then
+    pass "extras dry-run preserves legacy files and settings"
+else
+    fail "extras dry-run mutated state — inspect $VALIDATE_TMP/extras-dry-run.log"
+fi
+
+printf '{broken' > "$extras_home/.claude/settings.json"
+if ! HOME="$extras_home" "$SCRIPT_DIR/install_helper.sh" --none \
+       > "$VALIDATE_TMP/extras-invalid-json.log" 2>&1 && \
+   [ -f "$extras_home/.claude/statusline.sh" ]; then
+    pass "extras rejects malformed settings before mutation"
+else
+    fail "extras malformed-settings guard — inspect $VALIDATE_TMP/extras-invalid-json.log"
+fi
+
 if python3 "$SCRIPT_DIR/component_catalog.py" validate > "$VALIDATE_TMP/component-catalog.log" 2>&1; then
     pass "component catalog"
 else
@@ -212,6 +255,31 @@ if HOME="$claude_minimal_home" "$SCRIPT_DIR/install.sh" "${claude_minimal_args[@
     pass "Claude plugin-free reinstall lifecycle"
 else
     fail "Claude plugin-free reinstall — inspect $VALIDATE_TMP/claude-minimal-*.log"
+fi
+
+claude_partial_home="$install_test_home/claude-partial"
+mkdir -p "$claude_partial_home/.claude"
+cat > "$claude_partial_home/.claude/.hukuhaka-manifest.json" <<'JSON'
+{
+  "version": "1.0.9",
+  "components": ["hukuhaka-ltm", "hukuhaka-project-mapper"],
+  "files": []
+}
+JSON
+claude_partial_args=(--source-dir "$REPO_DIR" --version "$install_test_version" --host claude
+    --components hukuhaka-report-planner,hukuhaka-codex,claude-md --skip-preflight --skip-extras)
+if HOME="$claude_partial_home" "$SCRIPT_DIR/install.sh" "${claude_partial_args[@]}" \
+       > "$VALIDATE_TMP/claude-partial.log" 2>&1 && \
+   python3 - "$claude_partial_home/.claude/.hukuhaka-manifest.json" "$install_test_version" <<'PY'
+import json, sys
+manifest = json.load(open(sys.argv[1]))
+expected = {"hukuhaka-report-planner", "hukuhaka-codex", "claude-md"}
+raise SystemExit(0 if manifest.get("version") == sys.argv[2] and set(manifest.get("components", [])) == expected else 1)
+PY
+then
+    pass "Claude partial-state upgrade converges after dropped plugins are already absent"
+else
+    fail "Claude partial-state upgrade — inspect $VALIDATE_TMP/claude-partial.log"
 fi
 rm -rf "$install_test_home"
 

@@ -4,7 +4,6 @@
 #
 # Orthogonal to hukuhaka core. Independently runnable.
 #
-#   curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install_helper.sh | bash
 #   bash scripts/install_helper.sh
 #   bash scripts/install_helper.sh --components rtk
 #   bash scripts/install_helper.sh --components rtk,statusline
@@ -16,8 +15,11 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CLAUDE_DIR="$HOME/.claude"
 SETTINGS="$CLAUDE_DIR/settings.json"
+EXTRAS_MODULE="scripts.harness_installer.extras"
 
 EXPLICIT_COMPONENTS=""
 COMPONENTS_PROVIDED=false
@@ -41,6 +43,15 @@ if $SKIP; then
     exit 0
 fi
 
+if ! command -v python3 >/dev/null 2>&1 || ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)'; then
+    echo "extras: Python 3.9+ is required." >&2
+    exit 1
+fi
+if [ ! -f "$SCRIPT_DIR/harness_installer/extras.py" ]; then
+    echo "extras: installer runtime not found next to install_helper.sh; run the repository installer instead." >&2
+    exit 1
+fi
+
 # Flush any keypresses queued before the script took control of the tty.
 # Mitigates the `curl ... | bash` pre-selector window where arrow keys were
 # echoed by the terminal driver instead of consumed by an app. Subshell wrap
@@ -56,121 +67,48 @@ has_component() {
     [[ ",${EXPLICIT_COMPONENTS}," == *",$1,"* ]]
 }
 
+extras_state() {
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+        python3 -m "$EXTRAS_MODULE" inspect --field "$1" --claude-dir "$CLAUDE_DIR"
+}
+
+extras_mutate() {
+    local args=("$1" --claude-dir "$CLAUDE_DIR")
+    $DRY_RUN && args+=(--dry-run)
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+        python3 -m "$EXTRAS_MODULE" "${args[@]}"
+}
+
 ccstatusline_installed() {
-    [ -f "$SETTINGS" ] || { echo false; return; }
-    command -v python3 &>/dev/null || { echo false; return; }
-    python3 -c "
-import json,sys
-try:
-    s=json.load(open(sys.argv[1]))
-except Exception:
-    print('false'); sys.exit()
-sl=s.get('statusLine') or {}
-print('true' if 'ccstatusline' in sl.get('command','') else 'false')
-" "$SETTINGS"
+    extras_state statusline
 }
 
 statusline_entry_present() {
-    [ -f "$SETTINGS" ] || { echo false; return; }
-    command -v python3 &>/dev/null || { echo false; return; }
-    python3 -c "
-import json,sys
-try:
-    s=json.load(open(sys.argv[1]))
-except Exception:
-    print('false'); sys.exit()
-print('true' if 'statusLine' in s else 'false')
-" "$SETTINGS"
+    extras_state statusline-entry
 }
 
 statusline_entry_remove() {
-    [ -f "$SETTINGS" ] || return 0
-    command -v python3 &>/dev/null || return 0
-    python3 -c "
-import json,sys
-sf=sys.argv[1]
-with open(sf) as f: s=json.load(f)
-if 'statusLine' in s:
-    del s['statusLine']
-    with open(sf,'w') as f: json.dump(s,f,indent=2); f.write('\n')
-" "$SETTINGS"
+    extras_mutate remove-statusline >/dev/null
 }
 
 # Legacy migration: drop bundled ~/.claude/statusline.sh + stale entry that
 # pointed at it. Pre-helper installs shipped a bash statusline.sh.
 statusline_migrate_legacy() {
-    local legacy="$CLAUDE_DIR/statusline.sh"
-    local migrated=false
-    if [ -f "$legacy" ]; then
-        rm -f "$legacy"
-        migrated=true
+    local migrated
+    migrated=$(extras_mutate migrate-legacy)
+    if [ "$migrated" = "true" ]; then
+        $DRY_RUN && echo "  [dry-run] would remove legacy bundled statusline" || \
+            echo "  [migrate] removed legacy bundled statusline"
     fi
-    if [ -f "$SETTINGS" ] && command -v python3 &>/dev/null; then
-        local stale
-        stale=$(python3 -c "
-import json,sys
-try: s=json.load(open(sys.argv[1]))
-except Exception: print('false'); sys.exit()
-sl=s.get('statusLine') or {}
-cmd=sl.get('command','')
-print('true' if cmd.endswith('statusline.sh') and 'ccstatusline' not in cmd else 'false')
-" "$SETTINGS")
-        if [ "$stale" = "true" ]; then
-            statusline_entry_remove
-            migrated=true
-        fi
-    fi
-    $migrated && echo "  [migrate] removed legacy bundled statusline"
     return 0
 }
 
 rtk_hook_present() {
-    [ -f "$SETTINGS" ] || { echo false; return; }
-    command -v python3 &>/dev/null || { echo false; return; }
-    python3 -c "
-import json,sys
-try:
-    s=json.load(open(sys.argv[1]))
-except Exception:
-    print('false'); sys.exit()
-hooks=(s.get('hooks') or {}).get('PreToolUse') or []
-for h in hooks:
-    if h.get('matcher')=='Bash':
-        for sub in (h.get('hooks') or []):
-            if 'rtk hook' in (sub.get('command') or ''):
-                print('true'); sys.exit()
-print('false')
-" "$SETTINGS"
+    extras_state rtk-hook
 }
 
 rtk_hook_remove() {
-    [ -f "$SETTINGS" ] || return 0
-    command -v python3 &>/dev/null || return 0
-    python3 -c "
-import json,sys
-sf=sys.argv[1]
-with open(sf) as f: s=json.load(f)
-hooks=s.get('hooks') or {}
-pre=hooks.get('PreToolUse') or []
-new_pre=[]
-for h in pre:
-    if h.get('matcher')=='Bash':
-        kept=[sub for sub in (h.get('hooks') or []) if 'rtk hook' not in (sub.get('command') or '')]
-        if kept:
-            h['hooks']=kept
-            new_pre.append(h)
-    else:
-        new_pre.append(h)
-if new_pre:
-    hooks['PreToolUse']=new_pre
-else:
-    hooks.pop('PreToolUse',None)
-if hooks:
-    s['hooks']=hooks
-else:
-    s.pop('hooks',None)
-with open(sf,'w') as f: json.dump(s,f,indent=2); f.write('\n')
-" "$SETTINGS"
+    extras_mutate remove-rtk-hook >/dev/null
 }
 
 rtk_install_binary() {
