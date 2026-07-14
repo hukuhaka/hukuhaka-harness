@@ -1,79 +1,63 @@
 ---
 stage: 0
-purpose: turn a natural-language request into a light, confirmed Frame (purpose / audience / prose level / design direction; build preferences + form optional) — the shaping inputs the plan is built on
-prereq: user issued a report-shaped request
-deliverable: .claude/reports/tmp-draft/spec.md created with ONLY the Frame block
-verification_gate: user confirms/edits the Frame in one exchange
+purpose: discover the document job, reading behavior, form, audience, success test, source material, and evidence gaps
+prereq: user issued a visual-document planning or build request
+deliverable: .hukuhaka/reports/tmp-draft/spec.md created with Document Model and an initial Evidence block
+verification_gate: ask only when missing information blocks a defensible plan
 ---
 
-## What this stage does
+## Discover
 
-The entry is a sentence — "이 실험 결과 report로 만들고 싶어", "write up the Q1 benchmark",
-"이 프로젝트 구조 정리해줘". Stage 0 does the framing the user never types: a **brief look at
-the material, then a proposed Frame for confirmation**. This is light — one short exchange,
-not a gated interrogation. The deeper read and the figure/section proposal are Stage 1.
-
-The Frame is four required lines (plus optional `build preferences` and `form`). It is deliberately small: no mode, no
-register, no axis table. Just enough shaping that the Stage-1 plan is grounded, and the
-user's two biggest levers — **prose level** (how much explanatory text) and **design
-direction** (the taste/look) — are captured before any structure is proposed.
+Turn the request into a document model before choosing a structure or visual form. Do not
+open craft references in this stage.
 
 ## Process
 
-1. **Detect intent + material.** From the request, identify what the report is about and
-   what material backs it (experiment results, code, data, findings). If too thin to frame
-   (no identifiable subject), ask ONE clarifying question — otherwise proceed.
+1. **Determine invocation mode.** An explicit planning request is `plan`; an artifact request
+   is `build-preflight`. Only an explicit request to skip planning bypasses the skill.
 
-2. **Brief look.** Glance at the material enough to frame it — reuse existing `.claude/`
-   docs (`map.md`, `design.md`, `README`) when present; otherwise a light look at the
-   relevant files/data. Orient, don't audit — Stage 1 does the deep read.
+2. **Inspect the available material lightly.** Locate supplied files, data, code, prior
+   findings, and authoritative external sources. Reuse current project documentation when it
+   is relevant, but do not treat generated or stale documentation as verified evidence.
 
-3. **Propose the Frame**, each line a recommendation (alternatives only where genuinely open):
-   - **purpose** — what the report is for (보고용 발표 / 개인 정리 / 공유 문서 / go-no-go 논의 …).
-   - **audience** — who reads it, in what context, for what decision or lookup.
-   - **prose level** — `brief` (figure 중심, 설명 최소 — "나만 볼거라 간략하게") or `full`
-     (설명 산문 포함 — "보고용"). Infer from purpose + audience; surface for confirm.
-   - **design direction** — one line of visual intent: palette temperature, canvas, accent
-     strategy, optionally a reference look (e.g. `cool-neutral, pure-white canvas, single
-     electric-blue accent` or `warm editorial, cream paper`). The taste lever. If the user
-     has previously rejected a look (e.g. warm/yellowish), never re-propose it.
-   - **build preferences** (optional) — 1-3 soft heuristics in `prefer X over Y` language,
-     only when they clarify likely build drift. Example: `prefer one accent hue with
-     lightness/saturation variation over many unrelated hues`.
-   - **form** (optional) — web doc / deck / print PDF. Omit if undecided; it can be set later.
+3. **Derive the Document Model.** Record:
+   - `job`: `decide | explain | reference | monitor | persuade | teach | record`;
+   - `reading behavior`: `linear | scan | random-access | live`;
+   - `form`: web document, deck, dashboard, print/PDF, poster, or another explicit medium;
+   - `audience`: reader, context, and expected prior knowledge;
+   - `success test`: an observable reader outcome;
+   - `prose level`: `brief | balanced | full`.
 
-4. **GATE** — show the Frame, ask: "이대로 갈까요, 아니면 한 줄씩 고쳐주세요." One exchange;
-   iterate only if the user corrects.
+4. **Start the Evidence block.** List the material already available and the important gaps.
+   Use stable IDs (`S1`, `S2`) for sources. A source may be a supplied file, repository path,
+   dataset, user brief, or verified URL. Mark unverified claims as gaps, not facts.
 
-5. **Write** `.claude/reports/tmp-draft/spec.md` with ONLY the `## Frame` block per
-   `references/spec-schema.md`. spec.md is born here. The directory is `tmp-draft`; Stage 1
-   renames it from the subject.
+5. **Decide whether to ask.** Ask one concise question only if the user must choose a scope,
+   job, form, evidence boundary, or success test before planning can continue. A known evidence
+   gap is not by itself a reason to stop: record it and design a conditional recommendation,
+   measurement gate, or fallback. Otherwise make the assumption explicit and continue.
+
+6. **Write** `.hukuhaka/reports/tmp-draft/spec.md` with `## Document Model` and the initial
+   `## Evidence` block from `references/spec-schema.md`.
 
 ## Required reading
 
-- `references/spec-schema.md` — the Frame block shape (this stage produces it)
+- `references/spec-schema.md` — Document Model and Evidence block shapes
 
 ## Output (commit before Stage 1)
 
 ```
-FRAME confirmed:
-  purpose:          <one line>
-  audience:         <one line>
-  prose level:      <brief | full>
-  design direction: <one line>
-  build preferences:<prefer X over Y; ...>       (optional)
-  form:             <web doc | deck | print>   (optional)
-SPEC: .claude/reports/tmp-draft/spec.md created (Frame block only)
+DOCUMENT MODEL: <job> · <reading behavior> · <form>
+AUDIENCE: <reader and context>
+SUCCESS TEST: <observable outcome>
+EVIDENCE: <source IDs and gaps>
+SPEC: .hukuhaka/reports/tmp-draft/spec.md created
 ```
 
 ## Failure modes
 
-- **Over-framing** — turning the four lines into a long questionnaire. Stage 0 is one light
-  exchange; the substance (figures, sections) is Stage 1.
-- **Skipping the look and guessing** — the Frame must be grounded in a glance at the material.
-- **Proposing a design direction the user has rejected** — taste rejections persist across
-  reports; check the conversation and recorded feedback.
-- **Defaulting prose level to `full`** because it is "a report" — half the real uses are
-  personal/quick where `brief` is correct. Ask via purpose+audience.
-- Proposing sections or figures here — that is Stage 1. Stage 0 only fixes the shaping inputs.
-- Skipping the disk write — Stage 1 re-reads `tmp-draft/spec.md`; without it the chain breaks.
+- Turning discovery into a long questionnaire.
+- Treating `report`, `deck`, or `dashboard` as the reader's job.
+- Guessing evidence from memory or generated docs.
+- Choosing a design style before understanding the document model.
+- Skipping the draft write; Stage 1 re-reads it.

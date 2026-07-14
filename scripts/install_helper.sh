@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 #
-# hukuhaka-claude install helper — third-party extras (rtk, ccstatusline-usage)
+# hukuhaka-harness install helper — third-party extras (rtk, ccstatusline-usage)
 #
 # Orthogonal to hukuhaka core. Independently runnable.
 #
-#   curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-claude/main/scripts/install_helper.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install_helper.sh | bash
 #   bash scripts/install_helper.sh
 #   bash scripts/install_helper.sh --components rtk
 #   bash scripts/install_helper.sh --components rtk,statusline

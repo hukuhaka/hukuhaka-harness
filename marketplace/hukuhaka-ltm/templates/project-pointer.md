@@ -1,7 +1,7 @@
 <!-- hukuhaka-ltm:begin -->
 ## LTM (Long-Term Memory)
 
-This project uses [hukuhaka-ltm](https://github.com/hukuhaka/hukuhaka-claude/tree/main/marketplace/hukuhaka-ltm) for accumulated knowledge that does not belong in code or current-state docs.
+This project uses [hukuhaka-ltm](https://github.com/hukuhaka/hukuhaka-harness/tree/main/marketplace/hukuhaka-ltm) for accumulated knowledge that does not belong in code or current-state docs.
 
 - Location: `.claude/ltm/`
 - Rules: see `.claude/ltm/CLAUDE.md` (loaded lazily by `ltm-recall` / `ltm-append` skills)

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# hukuhaka-claude install preflight
+# hukuhaka-harness install preflight
 #
 # Discovers what tools / packages each selected component needs, checks
 # them against the host, prints a JSON report to stdout.
 #
 # Usage:
-#   scripts/preflight.sh --components a,b,c --src-dir /path/to/source
+#   scripts/preflight.sh --host claude|codex|both --components a,b,c --src-dir /path/to/source
 #
 # Exit codes:
 #   0 = all required satisfied
@@ -16,9 +16,11 @@ set -euo pipefail
 
 SRC_DIR=""
 COMPONENTS=""
+HOST="claude"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --host) HOST="$2"; shift 2 ;;
         --components) COMPONENTS="$2"; shift 2 ;;
         --src-dir) SRC_DIR="$2"; shift 2 ;;
         -h|--help)
@@ -27,6 +29,11 @@ while [[ $# -gt 0 ]]; do
         *) echo "Unknown option: $1" >&2; exit 2 ;;
     esac
 done
+
+case "$HOST" in
+    claude|codex|both) ;;
+    *) echo "Error: --host must be claude, codex, or both" >&2; exit 2 ;;
+esac
 
 if [ -z "$SRC_DIR" ] || [ ! -d "$SRC_DIR" ]; then
     echo "Error: --src-dir is required and must point to an extracted source tree" >&2
@@ -62,7 +69,7 @@ resolve_component_path() {
 }
 
 # Build the requirements set as JSON via python3.
-COMPONENTS="$COMPONENTS" SRC_DIR="$SRC_DIR" python3 <<'PY'
+COMPONENTS="$COMPONENTS" SRC_DIR="$SRC_DIR" HOST="$HOST" python3 <<'PY'
 import json
 import os
 import re
@@ -73,6 +80,7 @@ from pathlib import Path
 
 components_csv = os.environ.get("COMPONENTS", "")
 src_dir = Path(os.environ["SRC_DIR"])
+host = os.environ["HOST"]
 components = [c for c in components_csv.split(",") if c]
 
 # stdlib module names — for is_stdlib check.
@@ -99,7 +107,7 @@ except AttributeError:
         "zipfile", "zlib",
     } | ALWAYS_STDLIB
 
-# requirement key: (name, kind) where kind ∈ {system, python}
+# requirement key: (name, kind) where kind is system, manual, or python.
 requirements = {}
 
 def add_req(name, kind, required, needed_by):
@@ -121,9 +129,10 @@ def add_req(name, kind, required, needed_by):
 add_req("curl", "system", True, "installer (download)")
 add_req("tar", "system", True, "installer (extract archive)")
 add_req("python3", "system", True, "deploy (JSON manifests)")
+if host in {"codex", "both"}:
+    add_req("codex", "manual", True, "Codex plugin lifecycle")
 
 # ── Optional baselines
-add_req("jq", "system", False, "deploy (alternative JSON parser)")
 add_req("whiptail", "system", False, "selector UI (Python TUI is default fallback)")
 add_req("git", "system", False, "dev tools (eval pipeline)")
 
@@ -229,7 +238,7 @@ def check_python_module(name):
 
 results = []
 for (name, kind), info in requirements.items():
-    if kind == "system":
+    if kind in {"system", "manual"}:
         found, path, version = check_system(name)
         entry = {**info, "found": found}
         if found:

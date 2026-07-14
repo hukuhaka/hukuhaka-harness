@@ -1,82 +1,113 @@
-# hukuhaka-claude
+# hukuhaka-harness
 
-Claude Code plugins for **spec-first development** — keep a codebase's documentation in sync with the code through deterministic scripts plus targeted LLM analysis, with long-term memory accumulated across sessions.
+A small distribution of coding-agent workflows for Claude Code and Codex. Each
+component declares its supported host explicitly; sharing a repository does not
+imply that a Claude Code plugin is portable to Codex.
 
 ## Who this is for
 
-- You write code with Claude Code daily and the model wastes context re-discovering the codebase every session.
-- You want a small, persistent `.claude/` doc set that Claude reads first — and that stays accurate without manual upkeep.
-- You want a separate place for the *narrative* (decisions, philosophy, abandoned approaches) that doesn't belong in current-state docs but you don't want to lose.
+- You use Claude Code, Codex, or both and want reusable workflows with honest host boundaries.
+- You want evidence-backed document planning to constrain artifact construction.
+- You need a Claude-to-Codex collaboration harness without pretending it is a native Codex plugin.
 
 ## What's in the bundle
 
-| Component | Version | What it gives you |
-|-----------|---------|-------------------|
-| **hukuhaka-project-mapper** | `1.1.2` | Commands + agents that generate and maintain `.claude/{map,design,backlog,changelog,spec}.md` from your codebase. Init, scan, sync, summarize, compact, clean. |
-| **hukuhaka-ltm** | `0.5.0` | Long-term memory plugin with three-tier storage (L1 pinned, L2 indexed cards, L3 raw log). Autonomous L3 append via `<ltm-record>` markers parsed by the Stop hook; batch L2 distillation via `/hukuhaka-ltm:ltm-distill`. |
-| **hukuhaka-team** | — | Team lead orchestrator skill. Coordinates 3-5 teammates with distinct file ownership; lead reviews and decides without implementing. |
-| **hukuhaka-report-planner** | `0.2.0` | Report planner — looks at the material, proposes the concrete figures it needs (timing diagram, diff table, KPI strip, chart, hand-authored diagram) plus a section/tab outline, and captures the user's levers (purpose, audience, prose level, design direction, optional build preferences) into a recorded plan (`spec.md`). Plans, does not build — building is a separate, unconstrained step driven by the plan. |
-| **hukuhaka-codex** | `0.4.0` | Codex + Claude collaboration harness (Apache-2.0 fork of OpenAI's codex plugin). Adds grounded plan-then-implement, review, debate, full-loop orchestration, and Claude-to-Codex session transfer on top of the adapted Codex runtime. |
-| **CLAUDE.md template** | — | Spec-first router for `~/.claude/CLAUDE.md`: *Approach* / *Rules* / *Reference* structure with explicit decision-proposal format. |
+| Component | Version | Status | Hosts | What it gives you |
+|-----------|---------|--------|-------|-------------------|
+| **hukuhaka-report-planner** | `0.4.0` | Supported | Claude Code, Codex | Researches visual-document requests, derives reader-focused structure and anchors, and records a validated build contract in `spec.md`. Explicit plan requests stop there; artifact requests continue from the contract. |
+| **hukuhaka-codex** | `0.4.0` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
+| **hukuhaka-project-mapper** | `1.1.2` | Deprecated | Claude Code only | Legacy `.claude/` codebase-documentation generator. Available by explicit install; critical fixes only. |
+| **hukuhaka-ltm** | `0.5.0` | Deprecated | Claude Code only | Legacy three-tier long-term memory plugin. Available by explicit install; critical fixes only. |
+| **CLAUDE.md template** | — | Supported | Claude Code only | Spec-first router for `~/.claude/CLAUDE.md`. |
 
 Optional third-party extras (rtk, ccstatusline, agent-teams flag) ride along with the installer.
 
 ## Install
 
+The public installer supports Claude Code, Codex, or both. The default
+interactive flow asks for the target host before component selection. Explicit
+non-interactive operations that omit `--host` still target Claude Code for
+backward compatibility.
+
+### Interactive install
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-claude/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh | bash
 ```
 
-The installer is interactive by default (component selector → dependency preflight → optional extras). Re-running is safe — it detects existing state and applies the delta. Non-interactive variants:
+The installer is interactive by default (host selector → component selector → dependency preflight → optional extras). Choose Claude Code, Codex, or both. Fresh installs and `--all` select supported components only. Deprecated components remain visible but default off; existing selections are preserved on re-run.
+
+### Claude Code
+
+Non-interactive variants retain Claude Code as the default host:
 
 ```bash
 curl -fsSL .../install.sh | bash -s -- --all
-curl -fsSL .../install.sh | bash -s -- --components hukuhaka-project-mapper,claude-md
+curl -fsSL .../install.sh | bash -s -- --components hukuhaka-report-planner,hukuhaka-codex,claude-md
+curl -fsSL .../install.sh | bash -s -- --components hukuhaka-project-mapper
 curl -fsSL .../install.sh | bash -s -- --uninstall
 ```
 
-## First-run workflow
+The explicit `hukuhaka-project-mapper` example is a legacy install and prints a
+deprecation warning.
 
-After install, in any project:
+### Codex
 
-```text
-You:    /hukuhaka-project-mapper:map-init
-Claude: [scaffolds .claude/{map,design,backlog,changelog}.md]
+Use the same installer when you want host-aware selection, updates, and
+uninstall behavior:
 
-You:    /hukuhaka-project-mapper:map-scan
-Claude: [writes .claude/scan.md — per-directory CLAUDE.md placement decisions]
-
-You:    /hukuhaka-project-mapper:map-sync
-Claude: [scatter → analyzer reads codebase → writer emits docs → validator checks links]
+```bash
+curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh \
+  | bash -s -- --host codex --all
 ```
 
-For long-term memory:
+The equivalent native Codex commands are:
 
-```text
-You:    /hukuhaka-ltm:ltm-init
-Claude: [bootstraps .claude/ltm/ — pinned.md + index/ + log/ + CLAUDE.md rules]
-
-You:    "we decided to ditch X because of Y"
-Claude: [Stop hook captures this via <ltm-record> autonomous marker]
-
-You:    /hukuhaka-ltm:ltm-distill
-Claude: [batch-reviews auto-recorded entries, promotes into L2 cards]
+```bash
+codex plugin marketplace add hukuhaka/hukuhaka-harness
+codex plugin add hukuhaka-report-planner@hukuhaka-harness
 ```
 
-The `.claude/` files are small enough to load in full into the LLM context window at the start of every session. Skills read them first; the model stops re-discovering layout every time.
+The Codex marketplace intentionally exposes only the components with native
+Codex packaging. Invoke the planner explicitly as `$hukuhaka-report-planner`,
+or let Codex select it from its description.
+
+### Both hosts
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh \
+  | bash -s -- --host both --all
+```
+
+## Report planner workflow
+
+The same skill tree is used by both hosts:
+
+```text
+Claude Code: /hukuhaka-report-planner:hukuhaka-report-planner
+Codex:       $hukuhaka-report-planner
+```
+
+Both write `.hukuhaka/reports/<short-name>/spec.md`, a host-neutral compatibility
+contract that either host can consume. Existing `.claude/reports/` plans remain a
+read-only fallback. The shared workflow discovers the reader job and evidence, explores
+the document structure and anchors, then locks a selective-reference design and
+build contract. Explicit planning requests stop at the validated spec; immediate
+artifact requests use it as a preflight and continue building.
 
 ## Design principles
 
-- **Spec-first, not retroactive.** `.claude/{map,design,backlog,changelog,spec}.md` is the source of truth. Code drift triggers doc updates, not the other way around.
-- **Deterministic where possible, LLM where necessary.** Scripts handle file I/O, formatting, validation, deduplication. Agents handle analysis and synthesis.
-- **Hot/warm/cold memory tiers.** L1 always-loaded principles, L2 on-demand cards, L3 raw timeline. Autonomous L3 append for closure moments (decided, abandoned, lesson named) without per-turn user assent.
+- **Host support is explicit.** A component is published for a host only when its native package and validation exist.
+- **One portable workflow core.** Dual-host components share skill content and keep host-specific manifests at the boundary.
+- **Plan before build.** Report framing, figures, and structure are agreed before a separate builder creates the artifact.
 - **Idempotent install.** Detect state → install/skip/remove the delta. Re-runs are safe.
 
 ## Dependencies
 
 | | Required | Optional |
 |--|----------|----------|
-| **Base** | `git`, `python3` (or `jq`), `curl`, `tar` | — |
+| **Base** | `python3`, `curl`, `tar` | `git` |
+| **Codex host** | `codex` | — |
 | **Extras** | — | `brew` (rtk on macOS), `node`/`npx` (ccstatusline) |
 
 The installer's preflight check enumerates these per selected component and offers to auto-install via the detected package manager.

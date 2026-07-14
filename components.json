@@ -1,0 +1,77 @@
+{
+  "schemaVersion": 1,
+  "marketplaces": {
+    "claude": "hukuhaka-plugin",
+    "codex": "hukuhaka-harness"
+  },
+  "components": [
+    {
+      "name": "hukuhaka-report-planner",
+      "kind": "plugin",
+      "lifecycle": "supported",
+      "default": true,
+      "hosts": {
+        "claude": {
+          "manifest": "marketplace/hukuhaka-report-planner/.claude-plugin/plugin.json"
+        },
+        "codex": {
+          "manifest": "marketplace/hukuhaka-report-planner/.codex-plugin/plugin.json"
+        }
+      }
+    },
+    {
+      "name": "hukuhaka-codex",
+      "kind": "plugin",
+      "lifecycle": "supported",
+      "default": true,
+      "hosts": {
+        "claude": {
+          "manifest": "marketplace/hukuhaka-codex/.claude-plugin/plugin.json"
+        }
+      }
+    },
+    {
+      "name": "hukuhaka-project-mapper",
+      "kind": "plugin",
+      "lifecycle": "deprecated",
+      "default": false,
+      "hosts": {
+        "claude": {
+          "manifest": "marketplace/hukuhaka-project-mapper/.claude-plugin/plugin.json"
+        }
+      }
+    },
+    {
+      "name": "hukuhaka-ltm",
+      "kind": "plugin",
+      "lifecycle": "deprecated",
+      "default": false,
+      "hosts": {
+        "claude": {
+          "manifest": "marketplace/hukuhaka-ltm/.claude-plugin/plugin.json"
+        }
+      }
+    },
+    {
+      "name": "claude-md",
+      "kind": "template",
+      "lifecycle": "supported",
+      "default": true,
+      "description": "Spec-first router (~/.claude/CLAUDE.md)",
+      "path": "templates/CLAUDE.md",
+      "hosts": {
+        "claude": {}
+      }
+    },
+    {
+      "name": "agent-teams",
+      "kind": "feature",
+      "lifecycle": "supported",
+      "default": false,
+      "description": "Enable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS",
+      "hosts": {
+        "claude": {}
+      }
+    }
+  ]
+}

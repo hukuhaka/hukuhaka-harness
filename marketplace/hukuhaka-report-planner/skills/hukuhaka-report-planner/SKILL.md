@@ -1,102 +1,80 @@
 ---
 name: hukuhaka-report-planner
-description: "Plan a report before building it: look at the material, propose the concrete figures it needs (timing diagram, diff table, KPI strip, bar chart, hand-authored diagram, code block), propose a section/tab outline that carries them (01 Overview · 02 … · 03 …), refine with the user, and record the plan to spec.md. Captures the user's levers — purpose, audience, prose level (brief vs full), design direction (the look/taste, to avoid generic-AI output), optional build preferences — without imposing a rigid pipeline. Triggers — ANY of: report, writeup, summary, audit, benchmark, comparison, analysis, brief, deck, dashboard, slides, presentation, poster, memo, postmortem, retrospective, scorecard, recap, overview, findings, evaluation, review, walkthrough, handbook, explainer, technical writeup, executive summary, status update, incident report, code structure doc, project flow doc. Output: a recorded plan (spec.md) — NOT the built HTML. Building is a separate, unconstrained step the user runs afterward (e.g. hand the plan to hallmark / frontend-design). Skip when: the user wants the artifact built immediately with no planning, a long-form essay, blog post, marketing copy, API reference, or changelog list."
+description: "Plan or preflight an evidence-based visual document before it is built. Use for reports, memos, decks, dashboards, handbooks, explainers, postmortems, posters, and similar artifacts when the agent must research the material, identify the reader's job, design the information structure and anchors, synthesize selective references without cloning them, and record a build contract in spec.md. An explicit planning request stops at the validated spec; an immediate artifact request continues to build from that contract. Skip only when the user explicitly asks to bypass planning or wants ordinary prose, API reference, marketing copy, or a changelog."
 ---
 
-This skill **plans** a report — it does not build it. The job is to look at the material,
-figure out what the report should contain (which figures, which sections), agree that with
-the user, and record it. Building the HTML is a separate, unconstrained step that happens
-afterward, driven by the recorded plan.
+This skill turns a vague visual-document request into an evidence-backed build contract.
+It plans reports and also memos, handbooks, dashboards, explainers, decks, posters, and
+other artifacts whose structure depends on the reader's job.
 
-This is a deliberate scope: the previous version was a gated build pipeline that produced
-mediocre, over-constrained output. The valuable part was always the *thinking up front* —
-"이 자료엔 timing diagram·diff table가 필요하고, 섹션은 01 Overview · 02 Setup · 03 Results
-정도" — so that is all this skill does now. No registers, no modes, no per-page gates, no
-self-test battery. Two light stages, then a handoff.
+It does not restore the retired gated builder. Semantic decisions are locked, design
+decisions are guided, and exact composition remains open.
 
 ## Workflow
 
-Two stages. Open the stage file BEFORE executing it; do not work from memory.
+Open each stage file before executing it; do not work from memory.
 
 | # | File | Purpose | Verification gate |
 |---|---|---|---|
-| 0 | `stages/0-frame.md` | Brief look → propose a light Frame (purpose / audience / prose level / design direction; build preferences + form optional); spec.md born at `.claude/reports/tmp-draft/` | User confirms/edits the Frame in one exchange |
-| 1 | `stages/1-plan.md` | Read deeply → propose the figure inventory + section/tab outline → refine with the user → record spec.md → hand off | User confirms the figures + outline; then the skill stops (build is a separate turn) |
+| 0 | `stages/0-frame.md` | **Discover** the document job, reading behavior, form, audience, success test, material, and evidence gaps | Ask only when a missing decision blocks useful planning |
+| 1 | `stages/1-plan.md` | **Explore** the evidence, structural trunk, units, anchors, and reference-free design concept; then select references | Ask only when materially different directions remain |
+| 2 | `stages/2-lock.md` | **Lock** the final spec, build contract, and acceptance tests; validate and hand off | Final spec passes `scripts/validate-spec.sh` |
 
-The skill **ends when the plan is recorded.** It does not produce `report.html`, screenshots,
-or a self-test. If the user then says "build it", that is a new, unconstrained turn — the
-plan is the contract, but none of the old pipeline's gates/chunks/tests apply.
+## Invocation modes
+
+- **Plan mode:** when the user explicitly asks for a plan, write and validate `spec.md`,
+  report its path, and stop.
+- **Build-preflight mode:** when the user asks for the artifact itself, run all three stages,
+  then continue building in the same task from the validated contract.
+- **Bypass:** skip the planner only when the user explicitly asks to bypass planning.
 
 ## Output
 
 ```
-.claude/reports/<short-name>/
-  └── spec.md          ← the plan: ## Frame + ## Contents
+.hukuhaka/reports/<short-name>/
+  └── spec.md          ← evidence-backed document and build contract
 ```
 
-`spec.md` is the only artifact. See `references/spec-schema.md` for the exact shape. It holds
-a **Frame** (the shaping levers) and **Contents** (the section outline with per-section
-figures). No build log, no provenance tags, no axis table.
+See `references/spec-schema.md` for the exact shape. `.hukuhaka/reports/` is the single
+host-neutral write location shared by Claude Code and Codex.
 
-## Report Thinking (what the plan captures)
+## Path resolution
 
-- **Purpose + audience** — what the report is for and who reads it. These set everything else.
-- **Prose level** — `brief` (figure-centric, minimal text — "나만 볼거라 간략하게") vs `full`
-  (explanatory prose included — "보고용"). The single biggest lever on how the report reads.
-- **Design direction** — one line of visual intent (palette temperature, canvas, accent
-  strategy, optional reference look). The taste lever, captured so the eventual build does
-  not fall back to the generic-AI / warm-yellowish look the user rejects. Not a token sheet.
-- **Build preferences** — optional soft heuristics in "prefer X over Y" language. These
-  guide the builder away from generic defaults without becoming CSS tokens, fixed components,
-  or mandatory visual rules.
-- **Figure inventory** — the concrete figures the *material* calls for, derived from the
-  shape of the data (a metric over an ordered axis → line; a trace over time → timing diagram;
-  before/after → diff table; ranking → bar; structure → hand-authored diagram). The center of
-  the plan.
-- **Section/tab outline** — the figures grouped into a natural reading order, proposed from
-  the material (not a Background/Methodology/Conclusion template).
+- Write new drafts and final specs only under `.hukuhaka/reports/`.
+- When opening an existing plan, prefer `.hukuhaka/reports/<short-name>/spec.md`.
+- If no new-path plan exists, read `.claude/reports/<short-name>/spec.md` as a legacy fallback.
+- Legacy paths are read-only. Never dual-write, delete, or silently rewrite a legacy plan.
+- When the user explicitly continues a legacy plan, preserve the old file and write the next
+  revision under `.hukuhaka/reports/`.
 
-## Notes for the build (carried in the plan / handoff)
+## Core rules
 
-When the plan is eventually built, these keep it from generic-AI slop — record them in the
-handoff so whoever builds (hallmark / frontend-design / a normal turn) honors them:
-
-- Hand-author SVG for diagrams — never Mermaid, never auto-icons.
-- Charts are CSS bars / inline SVG — no charting library. RANKING → bar, OVER-TIME → line,
-  PART-TO-WHOLE → stacked.
-- Avoid the generic Tailwind-card look (slate borders, rounded-2xl everywhere, muted gray,
-  Inter-by-default), rainbow/3D/gradient chart styling, centered marketing-hero layouts,
-  and equal-weight flat hierarchy.
-- `font-variant-numeric: tabular-nums` on metrics; font chains end in a generic family.
-- The `design direction` line governs palette/canvas/accent — hold the whole document to it.
-- If `build preferences` are present, treat them as soft defaults. Prefer one accent hue with
-  lightness/saturation variation over many unrelated hues; add hues when they carry semantic
-  meaning.
-
-## Implementation Notes
-
-- **Derive figures, don't default them.** Propose the figure a piece of data can actually
-  support; never leave a data-rich section figure-less, never bolt on a figure the data
-  cannot back. This is the skill's main value.
-- **Don't build inside the skill.** Stage 1 records the plan and stops. Pixels are a separate
-  turn. Offering to build is fine; doing it under this skill's name is not.
-- **Verify named entities against source.** Any command, path, class, version, or count that
-  will appear in the report must be confirmed by reading/grepping the source before it lands
-  in the plan — memory is not verification.
-- **No mode/register/Hero/Spine machinery.** Removed on purpose. Structure is proposed freely
-  from the material each time; the only fixed shape is Frame + Contents.
+- Start from the **reader's job**, not from a report template.
+- Verify named entities and claims against source. Mark inference and unresolved gaps.
+- Define the structural **trunk** before listing units.
+- Use **anchors**, not mandatory figures. An anchor may be a chart, table, diagram,
+  screenshot, code example, checklist, quotation, or prose explanation.
+- Every anchor must answer a reader question and be supported by evidence. A unit may be
+  prose-only when prose is the clearest form.
+- Form a reference-name-free design concept before reading optional craft references.
+- Read `references/principles.md` and `references/reference-index.md`; select no more than
+  three optional references. Never read the whole reference directory by default.
+- Record what the plan borrows, transforms, and rejects. A reference supplies a mechanism,
+  never the whole design.
+- Do not create pinned tokens, fixed components, modes, registers, or per-page gates.
+- Keep exact layout, decorative geometry, and micro-composition in the `open` budget.
+- Keep contract depth proportional to the artifact. For a small memo, prefer two to four
+  units, zero to three non-prose anchors, and four to six acceptance tests. Use one concise
+  sentence per field and source IDs instead of repeating the same facts across blocks.
 
 ## References
 
-- `stages/0-frame.md`, `stages/1-plan.md` — the two-stage protocol; open each on entry
-- `references/spec-schema.md` — spec.md template (Frame + Contents); contract for `scripts/validate-spec.sh`
-- `references/craft/` — figure/structure reference (what makes a good timing diagram, diff
-  table, chart, callout, diagram). Used to propose figure types and describe them concretely;
-  reference notes, not a brief to inject (there is no build stage).
-- `references/fixtures/{source}/` — captured aesthetic systems (currently `fixtures/figma/`),
-  useful when describing a `design direction`. **Mine for ideas, never clone.**
-- `scripts/validate-spec.sh [<spec.md>]` — optional self-check (Frame fields + ≥1 Contents
-  section). Not a gate; nothing blocks the write.
+- `references/spec-schema.md` — final `spec.md` contract
+- `references/principles.md` — mandatory, style-neutral quality principles
+- `references/reference-index.md` — routing table for optional craft files
+- `references/craft/*.md` — optional problem-specific knowledge; select zero to three
+- `references/fixtures/` — opt-in style studies only; never load by default
+- `scripts/validate-spec.sh [<spec.md>]` — required final structural check
 
-Remember: the deliverable is a good *plan* — the right figures and a sound outline, agreed
-with the user. Building is someone else's next move.
+Resolve bundled reference and script paths relative to this `SKILL.md` file. Do not assume
+that the user's project root contains the planner's `scripts/` or `references/` directories.

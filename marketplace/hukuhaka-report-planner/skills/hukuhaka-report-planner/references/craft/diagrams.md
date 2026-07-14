@@ -1,45 +1,39 @@
 ---
-role: figure/structure reference for the report plan (not injected anywhere — there is no build stage)
-topic: hand-built SVG diagrams — the primary anchor for structure, flow, and pipeline figures
+role: optional anchor-selection reference
+use_when: evidence concerns process, sequence, state, dependency, topology, or spatial relation
+do_not_use_when: a list, table, or prose sequence answers the reader question more directly
+style_risk: one diagram grammar repeated across domains creates visual convergence
 ---
 
-## Hand-author rule
+## Representation choice
 
-Never Mermaid in this context. Auto-generated diagrams read as filler — the auto-layout is the convergence point. Hand-author every diagram in inline `<svg>`. This rule is absolute: if a diagram is too complex to hand-author, it is probably too complex for the report — decompose.
+Choose the representation after identifying the relationship and expected takeaway. A
+hand-authored SVG, diagram library, Mermaid source, HTML/CSS layout, canvas, or static export
+may be appropriate depending on complexity, reproducibility, accessibility, and medium. The
+planner records those constraints but does not mandate the implementation.
 
-## Stroke discipline
+## Structural requirements
 
-- All structural strokes: 1.5px OR 2px — pick ONE per diagram, use everywhere. Mixed weights read as accidental
-- Stroke color: `currentColor` (inherits ink) for structural lines; one literal accent color for the highlighted path only
-- Stroke-linecap: `round` for organic, `square` for technical schematics. Pick once per diagram
-- Never stroke + fill the same shape unless deliberately representing nested state — pick one
-
-## Color
-
-- Diagram chrome: ink-on-paper, hairline rules, no fills except severity boxes
-- At most ONE accent color per diagram (the highlighted path, the inflection node)
-- Severity boxes (rare): reuse the report's semantic palette, never new colors
+- Define what nodes, edges, regions, states, and direction mean.
+- Preserve labels at the final viewing size.
+- Make reading order and entry point visible.
+- Encode critical paths, changes, or exceptions only when supported by evidence.
+- Decompose or provide progressive disclosure when one surface cannot remain legible.
 
 ## Labels
 
-- Node labels: mono at body size or 1–2px smaller
-- Sub-labels / annotations: serif italic at body size minus 2–3px — separates annotation from primary label
-- Edge labels: mono at body size minus 2–3px, placed mid-edge over a paper-background slug so the label sits cleanly over the line
-- Tabular-nums on any numeric label (counts, throughput)
+- Use terminology from the verified source material.
+- Label relationships whose meaning is not obvious from position or direction.
+- Include units and time semantics for quantitative labels.
+- Avoid relying on color or line style alone.
 
 ## Annotation
 
-For every diagram, mark at least one of: the critical path, the bottleneck, the changed component, the entry point. Annotation = short mono label + hairline rule pointing to the element. A diagram with no accent path reads as inert — nothing to follow.
-
-Every figure needs a serif italic caption at body-size-minus-2 explaining what the reader is looking at.
+Annotate the critical path, bottleneck, changed component, or entry point when it answers the
+reader question. Exploratory topology diagrams may support lookup instead of one finding.
 
 ## Don'ts
 
-- Mermaid in any form, ever
-- Library iconography (Lucide, Feather, Font Awesome) as diagram nodes — converges to "tech blog hero"
-- Drop-shadowed boxes with rounded corners — generic
-- 3D rendering, isometric without reason, gradient fills on nodes — chart-junk
-- All-caps labels in body diagrams — shouting
-- Animated SVG (rotating, pulsing) — kills scan; this is a static artifact
-- Sans labels without tabular-nums — proportional digits in counts misalign
+- Decorative nodes or dimensions that imply unsupported meaning
+- Animation that prevents scan, comparison, or accessible fallback
 - Leader lines crossing each other to reach labels outside the figure — restructure the layout

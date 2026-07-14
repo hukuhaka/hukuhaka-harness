@@ -59,12 +59,30 @@ SHOW_CURSOR = CSI + "?25h"
 CLEAR_BELOW = CSI + "J"
 
 
-GROUP_DEFS = [
-    ("plugin",   "Plugins",  "~/.claude/plugins/hukuhaka-plugin/<name>/"),
-    ("skill",    "Skills",   "~/.claude/skills/<name>/"),
-    ("feature",  "Features", "~/.claude/settings.json (+statusline.sh)"),
-    ("template", "Template", "~/.claude/CLAUDE.md"),
-]
+GROUP_PATHS = {
+    "claude": {
+        "plugin": "~/.claude/plugins/hukuhaka-plugin/<name>/",
+        "skill": "~/.claude/skills/<name>/",
+        "feature": "~/.claude/settings.json",
+        "template": "~/.claude/CLAUDE.md",
+    },
+    "codex": {
+        "plugin": "Codex plugin marketplace",
+    },
+    "both": {
+        "plugin": "Claude Code / Codex native plugin stores",
+        "skill": "Claude Code skill store",
+        "feature": "Claude Code settings",
+        "template": "~/.claude/CLAUDE.md",
+    },
+}
+
+GROUP_NAMES = {
+    "plugin": "Plugins",
+    "skill": "Skills",
+    "feature": "Features",
+    "template": "Template",
+}
 
 
 def read_discovery(path):
@@ -114,7 +132,7 @@ def load_preflight(path, item_names):
 
 def main():
     if len(sys.argv) < 2:
-        print("usage: select_components.py <discovery_tsv> [prechecked_csv] [preflight_json]", file=sys.stderr)
+        print("usage: select_components.py <discovery_tsv> [prechecked_csv] [preflight_json] [host]", file=sys.stderr)
         sys.exit(2)
 
     discovery_path = sys.argv[1]
@@ -123,6 +141,10 @@ def main():
         prechecked = {n for n in sys.argv[2].split(",") if n}
 
     preflight_path = sys.argv[3] if len(sys.argv) > 3 else ""
+    host = sys.argv[4] if len(sys.argv) > 4 else "claude"
+    if host not in GROUP_PATHS:
+        print(f"unsupported host: {host}", file=sys.stderr)
+        sys.exit(2)
 
     items = read_discovery(discovery_path)
     if not items:
@@ -135,10 +157,15 @@ def main():
     host_status, component_reqs = load_preflight(preflight_path, [it["name"] for it in items])
 
     groups = []
-    for key, name, path in GROUP_DEFS:
+    for key, name in GROUP_NAMES.items():
         member_indices = [i for i, it in enumerate(items) if it["type"] == key]
         if member_indices:
-            groups.append({"key": key, "name": name, "path": path, "members": member_indices})
+            groups.append({
+                "key": key,
+                "name": name,
+                "path": GROUP_PATHS[host].get(key, "host-managed"),
+                "members": member_indices,
+            })
 
     positions = []
     for g_idx, g in enumerate(groups):
@@ -237,7 +264,7 @@ def main():
             state[i] = target
 
     def _render_select():
-        write(BOLD + "hukuhaka-claude — select components" + RESET + "\r\n")
+        write(BOLD + "hukuhaka-harness — select components" + RESET + "\r\n")
         write(DIM + "  ↑/↓ navigate • Space/Enter select • a toggle-all • q cancel" + RESET + "\r\n")
 
         if host_status:
@@ -354,7 +381,7 @@ def main():
 
     def _render_confirm():
         n_install, n_remove, _keep = diff_summary()
-        write(BOLD + "hukuhaka-claude — confirm changes" + RESET + "\r\n")
+        write(BOLD + "hukuhaka-harness — confirm changes" + RESET + "\r\n")
         write(DIM + "  Review the operations below. Remove is destructive — files will be deleted." + RESET + "\r\n")
         write("\r\n")
         write(BOLD + f"  Apply changes ({n_install} install, {n_remove} remove):" + RESET + "\r\n")

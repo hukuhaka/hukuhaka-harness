@@ -1,19 +1,22 @@
 #!/usr/bin/env bash
 #
-# hukuhaka-claude installer
+# hukuhaka-harness installer
 #
-# curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-claude/main/scripts/install.sh | bash
+# curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh | bash
 #
-# Default flow with no args: enter interactive component selector.
-# Currently-installed items are pre-checked; toggles drive add/remove.
+# Default flow with no args: select a host, then enter the interactive
+# component selector. Currently-installed items are pre-checked; toggles
+# drive add/remove.
 #
 # Flags:
+#   --host HOST            Target host: claude, codex, or both
+#                           (default: prompt interactively; otherwise claude)
 #   --version VERSION       Install specific version (default: latest release or main)
-#   --all                   Skip selector, install/keep everything
+#   --all                   Skip selector, install all active components
 #   --components a,b,c      Skip selector, set selection to exactly these
 #   --add a,b               Union with current manifest selection
 #   --remove a,b            Subtract from current manifest selection
-#   --uninstall             Remove all installed files using manifest
+#   --uninstall             Remove harness components from selected host(s)
 #   --skip-preflight        Skip dependency check
 #   --auto-install-deps     Auto-install missing required deps (no prompt)
 #   --print-deps            Print missing-deps install commands and exit
@@ -22,8 +25,7 @@
 #                           (skips its interactive prompt). Valid: rtk, statusline
 #   --help                  Show usage
 #
-# Component names: plugin / skill / feature names from marketplace/* / skills/*
-# plus 'agent-teams', 'claude-md'.
+# Component names and host support come from /components.json.
 #
 # Third-party extras (rtk, ccstatusline-usage) are managed separately via
 # scripts/install_helper.sh — auto-invoked at end unless --skip-extras.
@@ -40,17 +42,13 @@ set -euo pipefail
     read -t 0.01 -n 10000 _ </dev/tty
 } ) >/dev/null 2>&1 || true
 
-REPO="hukuhaka/hukuhaka-claude"
+REPO="hukuhaka/hukuhaka-harness"
 CLAUDE_DIR="$HOME/.claude"
 MANIFEST="$CLAUDE_DIR/.hukuhaka-manifest.json"
 
-# Skills whose default-on state should be false even if SKILL.md doesn't
-# self-mark as deprecated. Maintained here when retiring a skill without
-# editing its content. (Currently empty — codex-coworker and gemini-coworker
-# were removed from the repo entirely, 2026-06-02.)
-DEPRECATED_SKILLS=""
-
+HOST=""
 VERSION=""
+VERSION_EXPLICIT=false
 UNINSTALL=false
 MODE_ALL=false
 EXPLICIT_COMPONENTS=""
@@ -67,7 +65,8 @@ EXTRAS_PROVIDED=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --version) VERSION="$2"; shift 2 ;;
+        --host) HOST="$2"; shift 2 ;;
+        --version) VERSION="$2"; VERSION_EXPLICIT=true; shift 2 ;;
         --uninstall) UNINSTALL=true; shift ;;
         --all) MODE_ALL=true; shift ;;
         --components) EXPLICIT_COMPONENTS="$2"; shift 2 ;;
@@ -81,20 +80,65 @@ while [[ $# -gt 0 ]]; do
         --skip-extras) SKIP_EXTRAS=true; shift ;;
         --extras) EXTRAS_COMPONENTS="$2"; EXTRAS_PROVIDED=true; shift 2 ;;
         -h|--help)
-            sed -n '3,24p' "$0"
+            sed -n '3,26p' "$0"
             exit 0 ;;
         *) echo "Unknown option: $1" >&2; exit 1 ;;
     esac
 done
 
-# ── Prerequisites ─────────────────────────────────────────────────────
-
-has_json_tool() {
-    command -v python3 &>/dev/null || command -v jq &>/dev/null
+interactive_component_request() {
+    ! $MODE_ALL &&
+        [ -z "$EXPLICIT_COMPONENTS" ] &&
+        [ -z "$ADD_COMPONENTS" ] &&
+        [ -z "$REMOVE_COMPONENTS" ] &&
+        ! $UNINSTALL &&
+        ! $PRINT_DEPS
 }
 
-if ! has_json_tool; then
-    echo "Error: python3 or jq is required." >&2
+select_install_host() {
+    local choice
+    while true; do
+        {
+            echo ""
+            echo "Install for:"
+            echo "  1) Claude Code"
+            echo "  2) Codex"
+            echo "  3) Both"
+            printf "Select [1]: "
+        } > /dev/tty
+        read -r choice < /dev/tty || return 1
+        case "$choice" in
+            1|"") echo "claude"; return 0 ;;
+            2) echo "codex"; return 0 ;;
+            3) echo "both"; return 0 ;;
+            q|Q) return 1 ;;
+            *) echo "Enter 1, 2, or 3 (q to cancel)." > /dev/tty ;;
+        esac
+    done
+}
+
+if [ -z "$HOST" ]; then
+    if interactive_component_request && [ -r /dev/tty ] && [ -w /dev/tty ]; then
+        HOST=$(select_install_host) || {
+            echo "Cancelled. No changes made." >&2
+            exit 1
+        }
+    else
+        # Preserve the pre-dual-host behavior for automation and explicit
+        # non-interactive operations that omit --host.
+        HOST="claude"
+    fi
+fi
+
+case "$HOST" in
+    claude|codex|both) ;;
+    *) echo "Error: --host must be claude, codex, or both." >&2; exit 1 ;;
+esac
+
+# ── Prerequisites ─────────────────────────────────────────────────────
+
+if ! command -v python3 &>/dev/null; then
+    echo "Error: python3 is required." >&2
     exit 1
 fi
 
@@ -107,26 +151,22 @@ if ! $UNINSTALL; then
     done
 fi
 
-# ── Uninstall (unchanged from prior behavior) ────────────────────────
+# ── Uninstall ────────────────────────────────────────────────────────
 
-if $UNINSTALL; then
+uninstall_claude() {
     if [ ! -f "$MANIFEST" ]; then
-        echo "No manifest found — nothing to uninstall."
-        exit 0
+        echo "Claude Code: no manifest found — nothing to uninstall."
+        return 0
     fi
 
-    echo "Uninstalling hukuhaka-claude..."
+    echo "Uninstalling hukuhaka-harness from Claude Code..."
 
-    if command -v python3 &>/dev/null; then
-        files=$(python3 -c "
+    files=$(python3 -c "
 import json,sys
 m=json.load(open(sys.argv[1]))
 for f in m.get('files',[]):
     print(f)
 " "$MANIFEST")
-    else
-        files=$(jq -r '.files[]' "$MANIFEST")
-    fi
 
     count=0
     while IFS= read -r rel; do
@@ -138,8 +178,7 @@ for f in m.get('files',[]):
         fi
     done <<< "$files"
 
-    if command -v python3 &>/dev/null; then
-        python3 -c "
+    python3 -c "
 import json,sys,os
 claude=sys.argv[1]
 for name,path,keys in [
@@ -171,7 +210,6 @@ if os.path.isfile(sf):
         if not env: s.pop('env',None)
         with open(sf,'w') as f: json.dump(s,f,indent=2); f.write('\n')
 " "$CLAUDE_DIR" 2>/dev/null || true
-    fi
 
     for d in "$CLAUDE_DIR/plugins/cache/hukuhaka-plugin" "$CLAUDE_DIR/plugins/hukuhaka-plugin" "$CLAUDE_DIR/plugins/hukuhaka-project-mapper"; do
         [ -d "$d" ] && rm -rf "$d"
@@ -180,7 +218,41 @@ if os.path.isfile(sf):
     find "$CLAUDE_DIR/plugins" "$CLAUDE_DIR/skills" -type d -empty -delete 2>/dev/null || true
     rm -f "$MANIFEST"
 
-    echo "Removed $count files."
+    echo "Claude Code: removed $count files."
+}
+
+uninstall_codex() {
+    if ! command -v codex >/dev/null 2>&1; then
+        echo "Error: codex CLI is required for --host codex." >&2
+        return 1
+    fi
+    local plugin_ids
+    plugin_ids=$(codex plugin list --json | python3 -c '
+import json,sys
+for plugin in json.load(sys.stdin).get("installed", []):
+    if plugin.get("marketplaceName") == "hukuhaka-harness":
+        print(plugin["pluginId"])
+')
+    if [ -z "$plugin_ids" ]; then
+        echo "Codex: no installed hukuhaka-harness plugins."
+        return 0
+    fi
+    local count=0
+    while IFS= read -r plugin_id; do
+        [ -n "$plugin_id" ] || continue
+        codex plugin remove "$plugin_id" --json >/dev/null
+        echo "  [ok] removed $plugin_id"
+        count=$((count + 1))
+    done <<< "$plugin_ids"
+    echo "Codex: removed $count plugin(s); marketplace registration preserved."
+}
+
+if $UNINSTALL; then
+    case "$HOST" in
+        claude) uninstall_claude ;;
+        codex) uninstall_codex ;;
+        both) uninstall_claude; uninstall_codex ;;
+    esac
     exit 0
 fi
 
@@ -208,7 +280,7 @@ else
 fi
 
 PREV_VERSION=""
-if [ -f "$MANIFEST" ]; then
+if { [ "$HOST" = "claude" ] || [ "$HOST" = "both" ]; } && [ -f "$MANIFEST" ]; then
     if command -v python3 &>/dev/null; then
         PREV_VERSION=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('version',''))" "$MANIFEST" 2>/dev/null || true)
     elif command -v jq &>/dev/null; then
@@ -218,31 +290,32 @@ fi
 
 TARGET="${VERSION:-main}"
 if [ -n "$PREV_VERSION" ] && [ "$PREV_VERSION" != "$TARGET" ]; then
-    echo "hukuhaka-claude v${PREV_VERSION} → v${TARGET}"
+    echo "hukuhaka-harness v${PREV_VERSION} → v${TARGET}"
 elif [ -n "$PREV_VERSION" ]; then
-    echo "hukuhaka-claude v${TARGET} (reinstall/reconfigure)"
+    echo "hukuhaka-harness v${TARGET} (reinstall/reconfigure)"
 else
-    echo "hukuhaka-claude v${TARGET} (fresh install)"
+    echo "hukuhaka-harness v${TARGET} (fresh install)"
 fi
 
 # ── Download & extract (or use local source for testing) ──────────────
 
 if [ -n "$SOURCE_DIR_OVERRIDE" ]; then
     SRC_DIR="$SOURCE_DIR_OVERRIDE"
-    TMPDIR=""
+    DOWNLOAD_DIR=""
     trap '' EXIT
     echo "Using local source: $SRC_DIR"
 else
-    TMPDIR=$(mktemp -d)
-    trap 'rm -rf "$TMPDIR"' EXIT
+    DOWNLOAD_DIR=$(mktemp -d)
+    trap 'rm -rf "$DOWNLOAD_DIR"' EXIT
     echo "Downloading..."
-    curl -fsSL "$ARCHIVE_URL" -o "$TMPDIR/archive.tar.gz"
-    tar xzf "$TMPDIR/archive.tar.gz" -C "$TMPDIR"
-    SRC_DIR=$(find "$TMPDIR" -maxdepth 1 -type d ! -path "$TMPDIR" | head -1)
+    curl -fsSL "$ARCHIVE_URL" -o "$DOWNLOAD_DIR/archive.tar.gz"
+    tar xzf "$DOWNLOAD_DIR/archive.tar.gz" -C "$DOWNLOAD_DIR"
+    SRC_DIR=$(find "$DOWNLOAD_DIR" -maxdepth 1 -type d ! -path "$DOWNLOAD_DIR" | head -1)
 fi
 
-if [ -z "$SRC_DIR" ] || [ ! -f "$SRC_DIR/scripts/deploy.sh" ]; then
-    echo "Error: deploy.sh not found in source." >&2
+if [ -z "$SRC_DIR" ] || [ ! -f "$SRC_DIR/scripts/deploy.sh" ] || \
+   [ ! -f "$SRC_DIR/scripts/component_catalog.py" ] || [ ! -f "$SRC_DIR/components.json" ]; then
+    echo "Error: incomplete hukuhaka-harness source." >&2
     exit 1
 fi
 
@@ -251,59 +324,7 @@ fi
 # Output: NAME<TAB>TYPE<TAB>DESCRIPTION<TAB>DEFAULT_ON
 discover_components() {
     local src="$1"
-
-    # Plugins
-    for plugin_dir in "$src"/marketplace/*/; do
-        [ -f "$plugin_dir/.claude-plugin/plugin.json" ] || continue
-        local name desc
-        name=$(basename "${plugin_dir%/}")
-        desc=$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('description',''))" \
-                "$plugin_dir/.claude-plugin/plugin.json" 2>/dev/null || echo "")
-        printf '%s\t%s\t%s\t%s\n' "$name" "plugin" "$desc" "true"
-    done
-
-    # Standalone skills
-    for skill_dir in "$src"/skills/*/; do
-        [ -f "$skill_dir/SKILL.md" ] || continue
-        local name desc default_on
-        name=$(basename "${skill_dir%/}")
-        desc=$(python3 -c "
-import sys,re
-content=open(sys.argv[1]).read()
-fm_m=re.match(r'^---\n(.*?)\n---', content, re.S)
-if not fm_m:
-    print(''); sys.exit()
-fm=fm_m.group(1)
-d_m=re.search(r'^description:\s*(.+?)(?=^[a-zA-Z_-]+:|\Z)', fm, re.M | re.S)
-if not d_m:
-    print(''); sys.exit()
-raw=d_m.group(1).strip()
-if raw.startswith('>') or raw.startswith('|'):
-    body=raw[1:].strip()
-    desc=' '.join(line.strip() for line in body.split('\n') if line.strip())
-else:
-    desc=raw.split('\n')[0].strip()
-print(desc[:80])
-" "$skill_dir/SKILL.md" 2>/dev/null || echo "")
-        # Default OFF if frontmatter description mentions deprecation
-        # or if name is in the deprecation denylist (DEPRECATED_SKILLS).
-        if echo "$desc" | grep -qiE 'deprecat' || \
-           [[ ",${DEPRECATED_SKILLS:-}," == *",${name},"* ]]; then
-            default_on="false"
-        else
-            default_on="true"
-        fi
-        printf '%s\t%s\t%s\t%s\n' "$name" "skill" "$desc" "$default_on"
-    done
-
-    # Features (hardcoded). Note: rtk + ccstatusline are third-party extras
-    # and live in install_helper.sh — not listed here.
-    printf 'agent-teams\tfeature\tEnable CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS\tfalse\n'
-
-    # Template
-    if [ -f "$src/templates/CLAUDE.md" ]; then
-        printf 'claude-md\ttemplate\tSpec-first router (~/.claude/CLAUDE.md)\ttrue\n'
-    fi
+    python3 "$src/scripts/component_catalog.py" --root "$src" discover --host "$HOST"
 }
 
 # ── Manifest helpers ─────────────────────────────────────────────────
@@ -354,7 +375,7 @@ select_components_whiptail() {
     done < "$discovery_file"
 
     local result
-    result=$(whiptail --title "hukuhaka-claude" \
+    result=$(whiptail --title "hukuhaka-harness" \
         --checklist "Select components to install (Space toggles, Enter applies):" \
         20 76 12 "${args[@]}" 3>&1 1>&2 2>&3 < /dev/tty) || return 1
 
@@ -376,7 +397,7 @@ select_components_dialog() {
     done < "$discovery_file"
 
     local result
-    result=$(dialog --title "hukuhaka-claude" \
+    result=$(dialog --title "hukuhaka-harness" \
         --checklist "Select components to install:" \
         20 76 12 "${args[@]}" 3>&1 1>&2 2>&3 < /dev/tty) || return 1
     echo "$result" | tr ' ' '\n' | tr -d '"' | grep -v '^$'
@@ -441,7 +462,7 @@ select_components_python() {
     local discovery_file="$1"
     local prechecked_csv="$2"
     local preflight_json="${3:-}"
-    python3 "$SRC_DIR/scripts/select_components.py" "$discovery_file" "$prechecked_csv" "$preflight_json"
+    python3 "$SRC_DIR/scripts/select_components.py" "$discovery_file" "$prechecked_csv" "$preflight_json" "$HOST"
 }
 
 run_selector() {
@@ -511,7 +532,7 @@ cleanup_install() {
     # short-circuited cleanup &&-chain below must not leak its falsy status
     # as the script's exit code (this runs as the EXIT trap on success too).
     local rc=$?
-    [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ] && rm -rf "$TMPDIR"
+    [ -n "${DOWNLOAD_DIR:-}" ] && [ -d "$DOWNLOAD_DIR" ] && rm -rf "$DOWNLOAD_DIR"
     [ -n "${DISCOVERY_FILE:-}" ] && [ -f "$DISCOVERY_FILE" ] && rm -f "$DISCOVERY_FILE"
     [ -n "${PREFLIGHT_ALL_JSON:-}" ] && [ -f "$PREFLIGHT_ALL_JSON" ] && rm -f "$PREFLIGHT_ALL_JSON"
     [ -n "${PREFLIGHT_JSON:-}" ] && [ -f "$PREFLIGHT_JSON" ] && rm -f "$PREFLIGHT_JSON"
@@ -525,14 +546,34 @@ DEFAULT_ON_CSV=$(awk -F'\t' '$4=="true"{print $1}' "$DISCOVERY_FILE" | lines_to_
 
 # Prefill (current state for re-runs)
 PREFILL_CSV=""
-if [ -f "$MANIFEST" ]; then
-    if manifest_has_components_field; then
-        PREFILL_CSV=$(read_manifest_components | lines_to_csv)
-    else
-        # Pre-extension manifest — assume "all installed"
-        PREFILL_CSV="$ALL_CSV"
+HAS_CURRENT_STATE=false
+if [ "$HOST" = "claude" ] || [ "$HOST" = "both" ]; then
+    if [ -f "$MANIFEST" ]; then
+        HAS_CURRENT_STATE=true
+        if manifest_has_components_field; then
+            PREFILL_CSV=$(read_manifest_components | lines_to_csv)
+        else
+            # Pre-extension manifest — assume all Claude components installed.
+            PREFILL_CSV=$(python3 "$SRC_DIR/scripts/component_catalog.py" --root "$SRC_DIR" filter \
+                --host claude --components "$ALL_CSV")
+        fi
     fi
-else
+fi
+if { [ "$HOST" = "codex" ] || [ "$HOST" = "both" ]; } && command -v codex >/dev/null 2>&1; then
+    CODEX_CURRENT=$(codex plugin list --json 2>/dev/null | python3 -c '
+import json,sys
+data=json.load(sys.stdin)
+print(",".join(
+    plugin["name"] for plugin in data.get("installed", [])
+    if plugin.get("marketplaceName") == "hukuhaka-harness"
+))
+' 2>/dev/null || true)
+    if [ -n "$CODEX_CURRENT" ]; then
+        HAS_CURRENT_STATE=true
+        PREFILL_CSV=$(set_union "$PREFILL_CSV" "$CODEX_CURRENT")
+    fi
+fi
+if ! $HAS_CURRENT_STATE; then
     PREFILL_CSV="$DEFAULT_ON_CSV"
 fi
 
@@ -545,11 +586,11 @@ WENT_INTERACTIVE=false
 PREFLIGHT_ALL_JSON=""
 if ! $SKIP_PREFLIGHT; then
     PREFLIGHT_ALL_JSON=$(mktemp)
-    bash "$SRC_DIR/scripts/preflight.sh" --components "$ALL_CSV" --src-dir "$SRC_DIR" > "$PREFLIGHT_ALL_JSON" 2>/dev/null || true
+    bash "$SRC_DIR/scripts/preflight.sh" --host "$HOST" --components "$ALL_CSV" --src-dir "$SRC_DIR" > "$PREFLIGHT_ALL_JSON" 2>/dev/null || true
 fi
 
 if $MODE_ALL; then
-    FINAL_CSV="$ALL_CSV"
+    FINAL_CSV="$DEFAULT_ON_CSV"
 elif [ -n "$EXPLICIT_COMPONENTS" ]; then
     validate_components "$EXPLICIT_COMPONENTS" "$DISCOVERY_FILE" || exit 1
     FINAL_CSV="$EXPLICIT_COMPONENTS"
@@ -569,9 +610,17 @@ else
     FINAL_CSV=$(echo "$SELECTED" | lines_to_csv)
 fi
 
+DEPRECATED_SELECTED=$(python3 "$SRC_DIR/scripts/component_catalog.py" --root "$SRC_DIR" lifecycle \
+    --components "$FINAL_CSV" --state deprecated)
+
+if [ -n "$DEPRECATED_SELECTED" ]; then
+    echo "Warning: deprecated component(s) selected: $DEPRECATED_SELECTED" >&2
+    echo "         They remain installable for legacy Claude Code setups but receive critical fixes only." >&2
+fi
+
 if [ -z "$FINAL_CSV" ]; then
     if [ -e /dev/tty ]; then
-        printf "Empty selection — this will remove all hukuhaka-claude. Proceed? [y/N] " >&2
+        printf "Empty selection — this will remove all hukuhaka-harness. Proceed? [y/N] " >&2
         read -r ans < /dev/tty || ans=""
         [[ "$ans" =~ ^[Yy] ]] || { echo "Aborted."; exit 1; }
     else
@@ -580,8 +629,20 @@ if [ -z "$FINAL_CSV" ]; then
     fi
 fi
 
+CLAUDE_COMPONENTS=$(python3 "$SRC_DIR/scripts/component_catalog.py" --root "$SRC_DIR" filter \
+    --host claude --components "$FINAL_CSV")
+CODEX_COMPONENTS=$(python3 "$SRC_DIR/scripts/component_catalog.py" --root "$SRC_DIR" filter \
+    --host codex --components "$FINAL_CSV")
+
 echo ""
 echo "Components: $FINAL_CSV"
+echo "Installation plan:"
+if [ "$HOST" = "claude" ] || [ "$HOST" = "both" ]; then
+    echo "  Claude Code: ${CLAUDE_COMPONENTS:-none}"
+fi
+if [ "$HOST" = "codex" ] || [ "$HOST" = "both" ]; then
+    echo "  Codex:       ${CODEX_COMPONENTS:-none}"
+fi
 echo ""
 
 # ── Preflight (dependency check) ─────────────────────────────────────
@@ -592,7 +653,7 @@ run_preflight() {
     local out
     out=$(mktemp)
     local exit_code=0
-    bash "$SRC_DIR/scripts/preflight.sh" --components "$components" --src-dir "$SRC_DIR" > "$out" || exit_code=$?
+    bash "$SRC_DIR/scripts/preflight.sh" --host "$HOST" --components "$components" --src-dir "$SRC_DIR" > "$out" || exit_code=$?
 
     if [ "$quiet" != "true" ]; then
         echo "Requirements:"
@@ -689,8 +750,21 @@ handle_preflight_failure() {
     local missing_tools
     missing_tools=$(build_install_commands "$pm" "$preflight_file")
 
+    local missing_names
+    missing_names=$(python3 - "$preflight_file" <<'PY'
+import json, sys
+data = json.load(open(sys.argv[1]))
+print(" ".join(r["name"] for r in data["requirements"] if r["required"] and not r["found"]))
+PY
+)
+
     echo ""
-    echo "Some required tools are missing: $(echo $missing_tools | tr '\n' ' ')"
+    echo "Some required tools are missing: $missing_names"
+
+    if [ -z "$missing_tools" ]; then
+        echo "Install the missing host tool manually, then re-run the installer."
+        return 1
+    fi
 
     if [ -z "$pm" ]; then
         echo "No supported package manager detected ($(uname -s))."
@@ -770,16 +844,50 @@ if ! $SKIP_PREFLIGHT; then
     echo ""
 fi
 
-# ── Deploy ────────────────────────────────────────────────────────────
+# ── Host deploy ──────────────────────────────────────────────────────
 
-DEPLOY_ARGS=(--components "$FINAL_CSV")
-$DRY_RUN && DEPLOY_ARGS+=(--dry-run)
+HOST_DEPLOY_FAILED=false
+CLAUDE_STATUS="not selected"
+CODEX_STATUS="not selected"
 
-bash "$SRC_DIR/scripts/deploy.sh" "${DEPLOY_ARGS[@]}"
+if [ "$HOST" = "claude" ] || [ "$HOST" = "both" ]; then
+    CLAUDE_STATUS="no compatible components"
+fi
+if [ "$HOST" = "codex" ] || [ "$HOST" = "both" ]; then
+    CODEX_STATUS="no compatible components"
+fi
+
+if { [ "$HOST" = "claude" ] || [ "$HOST" = "both" ]; } && [ -n "$CLAUDE_COMPONENTS" ]; then
+    DEPLOY_ARGS=(--components "$CLAUDE_COMPONENTS")
+    $DRY_RUN && DEPLOY_ARGS+=(--dry-run)
+    if bash "$SRC_DIR/scripts/hosts/claude.sh" "${DEPLOY_ARGS[@]}"; then
+        CLAUDE_STATUS="complete"
+    else
+        CLAUDE_STATUS="failed"
+        HOST_DEPLOY_FAILED=true
+    fi
+fi
+
+if { [ "$HOST" = "codex" ] || [ "$HOST" = "both" ]; } && [ -n "$CODEX_COMPONENTS" ]; then
+    CODEX_ARGS=(--components "$CODEX_COMPONENTS" --version "$VERSION")
+    $DRY_RUN && CODEX_ARGS+=(--dry-run)
+    $VERSION_EXPLICIT && CODEX_ARGS+=(--version-explicit)
+    if [ -n "$SOURCE_DIR_OVERRIDE" ]; then
+        CODEX_ARGS+=(--marketplace-source "$SRC_DIR" --local-source)
+    fi
+    if bash "$SRC_DIR/scripts/hosts/codex.sh" "${CODEX_ARGS[@]}"; then
+        CODEX_STATUS="complete"
+    else
+        CODEX_STATUS="failed"
+        HOST_DEPLOY_FAILED=true
+    fi
+fi
 
 # ── Extras (orthogonal third-party tooling) ──────────────────────────
 
-if ! $SKIP_EXTRAS && [ -f "$SRC_DIR/scripts/install_helper.sh" ]; then
+if { [ "$HOST" = "claude" ] || [ "$HOST" = "both" ]; } && \
+   [ "$CLAUDE_STATUS" = "complete" ] && \
+   ! $SKIP_EXTRAS && [ -f "$SRC_DIR/scripts/install_helper.sh" ]; then
     HELPER_ARGS=()
     $DRY_RUN && HELPER_ARGS+=(--dry-run)
     if $EXTRAS_PROVIDED; then
@@ -789,8 +897,26 @@ if ! $SKIP_EXTRAS && [ -f "$SRC_DIR/scripts/install_helper.sh" ]; then
 fi
 
 echo ""
+echo "Host results:"
+if [ "$HOST" = "claude" ] || [ "$HOST" = "both" ]; then
+    echo "  Claude Code: $CLAUDE_STATUS"
+fi
+if [ "$HOST" = "codex" ] || [ "$HOST" = "both" ]; then
+    echo "  Codex:       $CODEX_STATUS"
+fi
+
+if $HOST_DEPLOY_FAILED; then
+    echo "Installation incomplete: one or more host deployments failed." >&2
+    exit 1
+fi
+
+echo ""
 if $DRY_RUN; then
     echo "Dry run complete. No files were modified."
 else
-    echo "Done! Restart Claude Code to load the plugins."
+    case "$HOST" in
+        claude) echo "Done! Restart Claude Code to load the plugins." ;;
+        codex) echo "Done! Start a new Codex task to load the plugins." ;;
+        both) echo "Done! Restart Claude Code and start a new Codex task to load the plugins." ;;
+    esac
 fi

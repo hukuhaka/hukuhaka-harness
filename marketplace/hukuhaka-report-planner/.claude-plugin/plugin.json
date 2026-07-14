@@ -1,15 +1,16 @@
 {
   "name": "hukuhaka-report-planner",
-  "version": "0.2.0",
-  "description": "Report planner — looks at the material, proposes the concrete figures it needs + a section/tab outline, captures the user's levers (purpose, audience, prose level, design direction, optional build preferences), and records the plan to spec.md. Plans, does not build; building is a separate unconstrained step.",
+  "version": "0.4.0",
+  "description": "Evidence-based visual document planner for reports, memos, decks, dashboards, handbooks, explainers, and similar artifacts. Researches the material, derives reader-focused structure and anchors, and records a validated build contract under .hukuhaka/reports/.",
   "author": {
     "name": "hukuhaka"
   },
   "keywords": [
+    "document",
     "report",
     "planning",
-    "outline",
-    "figures",
+    "research",
+    "anchors",
     "spec",
     "hukuhaka-report-planner"
   ]

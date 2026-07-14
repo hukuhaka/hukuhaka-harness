@@ -1,0 +1,30 @@
+{
+  "name": "hukuhaka-report-planner",
+  "version": "0.4.0",
+  "description": "Research and plan an evidence-based visual document, then record a validated structure, anchor plan, design direction, and build contract under .hukuhaka/reports/.",
+  "author": {
+    "name": "hukuhaka"
+  },
+  "repository": "https://github.com/hukuhaka/hukuhaka-harness",
+  "license": "MIT",
+  "keywords": [
+    "document",
+    "report",
+    "planning",
+    "research",
+    "anchors",
+    "spec"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Hukuhaka Report Planner",
+    "shortDescription": "Plan evidence-backed visual documents.",
+    "longDescription": "Research source material, derive the reader job, structure, anchors, and design direction, then record a validated build contract under .hukuhaka/reports/.",
+    "developerName": "hukuhaka",
+    "category": "Productivity",
+    "capabilities": [
+      "Planning"
+    ],
+    "defaultPrompt": "Research and plan this visual document before building it."
+  }
+}

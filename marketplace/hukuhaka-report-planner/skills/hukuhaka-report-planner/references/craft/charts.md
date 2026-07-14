@@ -1,45 +1,50 @@
 ---
-role: figure/structure reference for the report plan (not injected anywhere — there is no build stage)
-topic: argument-leaning — every chart must carry a finding
+role: optional anchor-selection reference
+use_when: quantitative evidence contains a comparison, change, distribution, relationship, or composition
+do_not_use_when: one value or one sentence answers the reader question more clearly
+style_risk: choosing from a short chart menu creates repetitive documents
 ---
 
 ## Default
 
-A chart is content, not chrome. Every chart answers a question prose cannot answer as efficiently. If the chart can be replaced by one sentence, delete the chart. Build charts as CSS bars or hand-authored inline SVG — every axis, palette, label, and annotation choice is intentional. Library defaults identify the report as a template-of-template instantly.
+A chart is evidence, not chrome. State the reader question, source fields, relationship,
+takeaway, and uncertainty before choosing a chart form. The planner does not choose the
+rendering library or implementation technology.
 
 ## Message type → chart type
 
-- RANKING → bar (horizontal when category names are long)
-- CHANGE-OVER-TIME → line
-- PART-TO-WHOLE → stacked bar
-- Pick the chart from the message, never from variety. Two adjacent bar charts beat one forced pie.
+- **Comparison or ranking:** bar, dot plot, lollipop, dumbbell, slope, or matrix.
+- **Change over time:** line, step, area, small multiples, or event-overlay.
+- **Distribution or uncertainty:** histogram, box, interval, density, or fan chart.
+- **Relationship:** scatter, connected scatter, bubble, or correlation matrix.
+- **Composition or contribution:** stacked bar, mosaic, treemap, or waterfall.
+
+Select from the relationship and reading task, not from a desire for variety.
 
 ## Axes
 
 - Label both axes with units (`Latency (ms)`, `Throughput (req/s)`). Unitless axes read as careless
 - Tabular-nums on all tick labels (`font-variant-numeric: tabular-nums`)
-- Tick density: ≤7 major ticks per axis; more = noise
+- Keep tick density low enough to scan at the target size.
 - Origin: include zero unless explicitly framing a delta range. If you crop the axis, annotate the crop (`// y-axis starts at 80%`) — silent cropping misleads
-- Gridlines: hairline 1px, light neutral, horizontal only. Vertical gridlines are noise unless the chart is time-series with date ticks
+- Use only the gridlines needed to make comparisons accurately.
 
 ## Palette
 
-- 2-series chart → one committed comparison color pair (winner-loser, baseline-proposed). Same pair across every chart in the same report
-- ≥3 series → one accent + greyscale shades. Rainbow palettes are forbidden
-- Categorical (not comparative) → ordinal greyscale + one accent for the focus category; single-series → one accent, neutral chrome
-- Never assign meaning to color alone — pair with shape, label, or position
+- Keep semantic roles consistent across the document.
+- Use as many distinguishable encodings as the evidence requires, but no more.
+- Never assign meaning to color alone; pair it with a label, shape, pattern, or position.
 
 ## Annotation
 
-For every chart, mark at least one of: the bar that matters, the inflection, the crossover, the outlier. Annotation = short text label + hairline rule pointing to the data point, NOT a callout balloon with shadow. A chart with no annotation conveys no specific finding.
+Annotate the finding, inflection, comparison, or uncertainty when the reader would otherwise
+have to infer it. Exploratory and lookup charts may not have one predetermined finding.
 
 ## Don'ts
 
-- 3D bars, drop-shadowed bars, gradient fills on data, rainbow palettes, chart-junk borders
-- Charting-library default colors (e.g., `rgba(54, 162, 235)`) — instantly identifies AI default
-- Pie chart with >5 slices → use horizontal bar instead
+- Decorative depth or effects that imply values not present in the data
+- Too many segments to compare accurately in an angle- or area-based chart
 - Time-series with x-axis labels `1, 2, 3, 4` — show actual dates
 - Stacked bars without category total annotation — reader has to do mental math
 - "Smooth" line interpolation on noisy data — misleads about between-point values
-- Legend when direct labels fit next to each line/bar — direct-label and drop the legend
 - Axis labels too small or low-contrast to read at page-thumbnail zoom

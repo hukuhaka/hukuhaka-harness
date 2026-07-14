@@ -1,0 +1,20 @@
+{
+  "name": "hukuhaka-harness",
+  "interface": {
+    "displayName": "Hukuhaka Harness"
+  },
+  "plugins": [
+    {
+      "name": "hukuhaka-report-planner",
+      "source": {
+        "source": "local",
+        "path": "./marketplace/hukuhaka-report-planner"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

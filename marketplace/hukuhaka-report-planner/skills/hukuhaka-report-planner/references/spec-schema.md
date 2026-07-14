@@ -1,80 +1,103 @@
-# spec.md schema — the report plan
+# spec.md schema — document build contract
 
-This skill produces ONE artifact: a **plan** recorded at
+This skill produces one planning artifact at
 
 ```
-.claude/reports/<short-name>/spec.md
+.hukuhaka/reports/<short-name>/spec.md
 ```
 
-No `report.html`, no screenshots — building is a separate, unconstrained step that happens
-*after* this skill, driven by the plan. The plan is the deliverable.
+An explicit plan request stops here. An immediate artifact request uses this validated file
+as a preflight contract and continues to build.
 
-`<short-name>` is derived in Stage 1 from the subject (lowercase, hyphenated, ≤24 chars,
-e.g. `vit-benchmark`, `terraform-flow`, `q1-earnings`). spec.md is born at Stage 0 under
-`.claude/reports/tmp-draft/` with the `## Frame` block alone; Stage 1 overwrites it with
-Frame (carried forward) + `## Contents`, then renames the directory to `<short-name>`.
+`<short-name>` is derived in Stage 2 from the subject: lowercase kebab-case, at most 24
+characters. Stage 0 creates `.hukuhaka/reports/tmp-draft/spec.md`; Stage 2 renames the
+directory and validates the complete file.
+
+`.claude/reports/<short-name>/spec.md` is a read-only compatibility fallback for plans
+created before `0.4.0`. New and updated specs are written only to `.hukuhaka/reports/`;
+the planner does not dual-write, delete, or silently migrate legacy files.
 
 ## spec.md — full template
 
 ```markdown
-# <title> — report plan — <YYYY-MM-DD>
+# <title> — document plan — <YYYY-MM-DD>
 
-## Frame
+## Document Model
 
-- purpose: <what the report is for — 보고용 발표 | 개인 정리 | 공유 문서 | go/no-go 논의 | ...>
-- audience: <who reads it, in what context, for what decision or lookup>
-- prose level: <brief — figure 중심, 설명 최소 | full — 설명 산문 포함>
-- design direction: <one line — palette temperature, canvas, accent strategy, optional reference look; e.g. "cool-neutral, pure-white canvas, single electric-blue accent, fintech-crisp">
-- build preferences: <optional; 1-3 soft heuristics using "prefer X over Y"; e.g. "prefer one accent hue with lightness/saturation variation over many unrelated hues; prefer figure-first layouts over card grids">
-- form: <web doc | deck | print PDF>   # optional — omit if undecided
+- job: <decide | explain | reference | monitor | persuade | teach | record>
+- reading behavior: <linear | scan | random-access | live>
+- form: <web document | deck | dashboard | print/PDF | poster | ...>
+- audience: <reader, context, and expected prior knowledge>
+- success test: <observable reader outcome>
+- prose level: <brief | balanced | full>
 
-## Contents
+## Evidence
 
-- 01 <Section / tab title> — figures: <timing diagram | diff table | KPI strip | bar chart | code block | ...>; note: <one line, optional>
-- 02 <Section / tab title> — figures: <...>
-- 03 <Section / tab title> — figures: <...>
-- ...
-- out of scope: <what the report deliberately excludes, one line>   # optional
+- established: <verified facts that shape the plan>
+- source S1: <path, dataset, user brief, or verified URL> — supports: <claims/units/anchors>
+- source S2: <...>
+- conflict: <conflicting evidence, or none>
+- gap: <missing or unverified evidence, or none>
+- freshness: <date-sensitive boundary, or not applicable>
+
+## Structure
+
+- trunk: <central claim, decision, sequence, taxonomy, comparison, timeline, map, or loop>
+- U1 <unit title>
+  - reader question: <question this unit answers>
+  - reader outcome: <what the reader knows, decides, finds, or does>
+  - evidence: <S1, S2, or explicit inference>
+  - anchor: <A1 | prose>
+- U2 <unit title>
+  - reader question: <...>
+  - reader outcome: <...>
+  - evidence: <...>
+  - anchor: <A2 | prose>
+
+## Anchors
+
+### A1 <anchor name>
+
+- reader question: <question answered>
+- evidence: <S1, fields/range, or explicit qualitative material>
+- selected form: <chart | table | diagram | screenshot | code | checklist | quote | ...>
+- takeaway: <what the reader should see>
+- caveat: <uncertainty or validity condition, or none>
+
+<!-- If every unit is intentionally prose-only, replace A1 with: -->
+<!-- - none: <why prose is the clearest form> -->
+
+## Design Direction
+
+- concept: <reference-name-free description of density, rhythm, voice, geometry, color semantics, and anchor treatment>
+- selected references: <zero to three paths, or none>
+- borrow: <mechanisms adopted>
+- transform: <how they change for this document>
+- reject: <mechanisms intentionally excluded>
+- clone risk: <how visual convergence will be avoided>
+
+## Build Contract
+
+- locked: <facts, source boundaries, reader job, structure, anchor meaning, accessibility>
+- guided: <density, type roles, color roles, rhythm, surface and anchor grammar>
+- open: <exact composition, decorative geometry, micro-layout, implementation details>
+
+## Acceptance Tests
+
+- [ ] <Document Model success test>
+- [ ] Evidence fidelity: factual claims and anchors resolve to listed sources.
+- [ ] Structure scan: the trunk and unit sequence are recoverable from headings and anchors.
+- [ ] Anchor validity: every non-prose anchor answers its reader question without overstating evidence.
 ```
-
-That is the whole file. There are no provenance tags, no register/mode axes, no build log.
-
-## What each block is for
-
-- **Frame** — the four required lines (plus optional `build preferences` and `form`) that shape every later decision.
-  `prose level` is the lever the user reaches for with "나만 볼거라 설명 글은 간략하게"
-  (→ `brief`) vs "보고용" (→ `full`). `design direction` is the taste lever — one line of
-  visual intent handed to whoever builds, NOT a token sheet. It exists to prevent the
-  generic-AI / warm-yellowish default the user has rejected. `build preferences` are soft
-  "prefer X over Y" heuristics for likely build drift, not CSS tokens or mandatory visual
-  rules.
-- **Contents** — the section/tab outline. Each line names a section AND the concrete figures
-  that section needs, derived from the actual material (not guessed). This is the heart of
-  the plan: "이 자료엔 timing diagram·diff table·throughput bar가 필요하고, 섹션은
-  01 Overview · 02 Setup · 03 Results …" lands here.
 
 ## Rules
 
-- **Frame rule (Stage 0)**: the `## Frame` block holds the four required lines (`purpose`,
-  `audience`, `prose level`, `design direction`), each non-empty. `build preferences` and
-  `form` are optional. spec.md is born at Stage 0 with this block alone.
-- **Contents rule (Stage 1)**: at least one `- NN <title>` section line, each naming its
-  figures. The figure list is derived from the material — if a section names no anchor, it
-  is prose-only and should be reconsidered or merged.
-- **Figures are derived, not defaulted**: the plan proposes the figures the material calls
-  for (a timing series → timing diagram; before/after → diff table; a ranking → bar). Do not
-  attach a figure type the data cannot support, and do not leave a data-rich section with no
-  figure.
-- **Design direction is a brief lever, not a style sheet**: one line constraining
-  temperature/canvas/accent. The eventual builder interprets it; the plan does not enumerate
-  CSS tokens.
-- **Build preferences are soft heuristics, not gates**: use `prefer X over Y` language to
-  guide the eventual builder away from generic defaults without turning the plan into a CSS
-  spec. Keep them optional and short.
-- **No mode, no register, no determinism table.** Structure is proposed freely from the
-  material each time. There is no argument/reference fork.
-- **The plan stops at spec.md.** This skill does not build, screenshot, or self-test the
-  artifact. Handoff to a design skill (`hallmark` / `frontend-design`) or a normal build turn
-  is the user's next, unconstrained step.
-- `validate-spec.sh` is an **optional self-check** (Frame fields present + ≥1 Contents
-  section), not a fail-closed gate. Nothing blocks the write.
+- The complete spec contains all seven level-two blocks in the order above.
+- Every unit has a reader question, reader outcome, evidence, and an anchor or `prose`.
+- Every non-prose anchor has evidence, selected form, takeaway, and caveat.
+- A prose-only document uses `- none:` in Anchors and explains why.
+- Design Direction starts without reference names, then records zero to three selected
+  references and the borrow/transform/reject decisions.
+- Build Contract guides visual language without specifying CSS tokens or fixed components.
+- `validate-spec.sh` is required before handoff. It checks structure, not semantic or visual
+  quality; recorded acceptance tests still have to be run against the finished artifact.

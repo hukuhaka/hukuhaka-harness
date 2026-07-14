@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# hukuhaka-claude deploy — manifest-based
+# hukuhaka-harness deploy — manifest-based
 #
 # Tracks installed files in ~/.claude/.hukuhaka-manifest.json
 # Only removes files it deployed; safe alongside other plugins.
@@ -83,8 +83,8 @@ has_component() {
 
 # ── Prereq check ──────────────────────────────────────────────────────
 
-if ! command -v python3 &>/dev/null && ! command -v jq &>/dev/null; then
-    echo "Error: python3 or jq is required." >&2
+if ! command -v python3 &>/dev/null; then
+    echo "Error: python3 is required." >&2
     exit 1
 fi
 
@@ -436,12 +436,18 @@ if [ -f "$MANIFEST" ]; then
     PREV_VERSION=$(read_version "$MANIFEST")
 fi
 
+SELECTED_PLUGIN_NAMES=()
+for plugin_name in "${PLUGIN_NAMES[@]}"; do
+    has_component "$plugin_name" && SELECTED_PLUGIN_NAMES+=("$plugin_name")
+done
+selected_plugin_summary="${SELECTED_PLUGIN_NAMES[*]:-none}"
+
 if [ -n "$PREV_VERSION" ] && [ "$PREV_VERSION" != "${VERSION:-unknown}" ]; then
-    echo "hukuhaka-claude v${PREV_VERSION} → v${VERSION:-unknown} (plugins: ${PLUGIN_NAMES[*]})"
+    echo "hukuhaka-harness v${PREV_VERSION} → v${VERSION:-unknown} (plugins: $selected_plugin_summary)"
 elif [ -n "$PREV_VERSION" ]; then
-    echo "hukuhaka-claude v${VERSION:-unknown} (reinstall — plugins: ${PLUGIN_NAMES[*]})"
+    echo "hukuhaka-harness v${VERSION:-unknown} (reinstall — plugins: $selected_plugin_summary)"
 else
-    echo "hukuhaka-claude v${VERSION:-unknown} (fresh install — plugins: ${PLUGIN_NAMES[*]})"
+    echo "hukuhaka-harness v${VERSION:-unknown} (fresh install — plugins: $selected_plugin_summary)"
 fi
 echo ""
 
@@ -454,7 +460,7 @@ if $UNINSTALL; then
     fi
 
     if ! $FORCE && ! $DRY_RUN; then
-        echo "This will remove all hukuhaka-claude files from $CLAUDE_DIR."
+        echo "This will remove all hukuhaka-harness files from $CLAUDE_DIR."
         printf "Continue? [y/N] "
         read -r answer
         [[ "$answer" =~ ^[Yy] ]] || { echo "Aborted."; exit 1; }
@@ -669,7 +675,7 @@ with open(out_file,'w') as f: json.dump(d,f,indent=2); f.write('\n')
     # Add to file list for manifest tracking
     echo "plugins/$MARKETPLACE_NAME/.claude-plugin/marketplace.json" >> "$NEW_LIST"
     sort -o "$NEW_LIST" "$NEW_LIST"
-    echo "  [ok] marketplace.json (${#PLUGIN_NAMES[@]} plugin(s))"
+    echo "  [ok] marketplace.json (${#SELECTED_PLUGIN_NAMES[@]} plugin(s))"
 }
 
 generate_marketplace_manifest
@@ -755,7 +761,8 @@ unregister_dropped_plugins() {
     fi
 
     local dropped=()
-    for c in "${prev[@]}"; do
+    for c in "${prev[@]-}"; do
+        [ -n "$c" ] || continue
         if ! has_component "$c"; then
             dropped+=("$c")
         fi

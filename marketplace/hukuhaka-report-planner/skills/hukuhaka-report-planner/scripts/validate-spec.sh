@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# validate-spec.sh — optional self-check for a report plan spec.md
+# validate-spec.sh — structural check for a final document-plan spec.md
 # usage: validate-spec.sh [<spec.md>]
 #   no path arg → read spec content from stdin
 #   path arg    → read the on-disk file
-# contract source: references/spec-schema.md (Frame + Contents blocks)
-#   (keep FRAME_FIELDS below in sync with spec-schema.md)
-#
-# This is a SELF-CHECK, not a gate: it is not wired to any hook and nothing blocks
-# a write on failure. It exists so a stage can sanity-check its own output.
-# Validates only the blocks PRESENT in the spec (it grows across the two stages).
+# contract source: references/spec-schema.md
 set -uo pipefail
 
 FILE=""
@@ -29,39 +24,89 @@ fi
 ERRORS=0
 fail(){ echo "FAIL: $1"; ERRORS=$((ERRORS+1)); }
 
-# Contract: the four REQUIRED Frame lines (build preferences and form are optional).
-FRAME_FIELDS=( "purpose" "audience" "prose level" "design direction" )
-
-has_block(){ printf '%s\n' "$SPEC" | grep -Eq "^## $1"; }
-field_line(){ printf '%s\n' "$SPEC" | grep -E "^- $1:" | head -1; }
-
-# A FILLED line never contains '<' — the template stub is "<what the report is for ...>".
-check_frame(){
-  local line val
-  line="$(field_line "$1")"
-  [ -n "$line" ] || { fail "Frame field missing: $1"; return; }
-  case "$line" in *'<'*) fail "Frame field unfilled (<...> placeholder): $1"; return ;; esac
-  val="${line#*:}"
-  printf '%s' "$val" | grep -Eq '[^[:space:]]' || fail "Frame field empty: $1"
+block_text(){
+  printf '%s\n' "$SPEC" | awk -v heading="## $1" '
+    $0 == heading { inside=1; next }
+    inside && /^## / { exit }
+    inside { print }
+  '
 }
 
-# Frame block
-if has_block "Frame"; then
-  for f in "${FRAME_FIELDS[@]}"; do check_frame "$f"; done
+require_block(){
+  local count
+  count="$(printf '%s\n' "$SPEC" | grep -Fxc "## $1" || true)"
+  [ "$count" -ge 1 ] || { fail "block missing: $1"; return; }
+  [ "$count" -eq 1 ] || fail "block duplicated: $1"
+}
+
+check_field(){
+  local block="$1" field="$2" text line value
+  text="$(block_text "$block")"
+  line="$(printf '%s\n' "$text" | grep -E "^- $field:" | head -1 || true)"
+  [ -n "$line" ] || { fail "$block field missing: $field"; return; }
+  case "$line" in *'<'*) fail "$block field unfilled: $field"; return ;; esac
+  value="${line#*:}"
+  printf '%s' "$value" | grep -Eq '[^[:space:]]' || fail "$block field empty: $field"
+}
+
+BLOCKS=( "Document Model" "Evidence" "Structure" "Anchors" "Design Direction" "Build Contract" "Acceptance Tests" )
+for block in "${BLOCKS[@]}"; do require_block "$block"; done
+
+LAST_LINE=0
+for block in "${BLOCKS[@]}"; do
+  line="$(printf '%s\n' "$SPEC" | grep -Fn "## $block" | head -1 | cut -d: -f1 || true)"
+  [ -n "$line" ] || continue
+  [ "$line" -gt "$LAST_LINE" ] || fail "block out of order: $block"
+  LAST_LINE="$line"
+done
+
+MODEL_FIELDS=( "job" "reading behavior" "form" "audience" "success test" "prose level" )
+for field in "${MODEL_FIELDS[@]}"; do check_field "Document Model" "$field"; done
+
+EVIDENCE="$(block_text "Evidence")"
+printf '%s\n' "$EVIDENCE" | grep -Eq '^- source S[0-9]+:' || fail "Evidence needs at least one '- source S<number>:' line"
+for field in "established" "gap"; do check_field "Evidence" "$field"; done
+SOURCE_IDS="$(printf '%s\n' "$EVIDENCE" | sed -n 's/^- source \(S[0-9][0-9]*\):.*/\1/p')"
+
+STRUCTURE="$(block_text "Structure")"
+check_field "Structure" "trunk"
+UNIT_COUNT="$(printf '%s\n' "$STRUCTURE" | grep -Ec '^- U[0-9]+ +[^[:space:]]' || true)"
+[ "$UNIT_COUNT" -ge 1 ] || fail "Structure needs at least one '- U<number> <title>' line"
+for field in "reader question" "reader outcome" "evidence" "anchor"; do
+  count="$(printf '%s\n' "$STRUCTURE" | grep -Ec "^  - $field:" || true)"
+  [ "$count" -ge "$UNIT_COUNT" ] || fail "Structure needs '$field' for every unit"
+done
+
+ANCHORS="$(block_text "Anchors")"
+ANCHOR_COUNT="$(printf '%s\n' "$ANCHORS" | grep -Ec '^### A[0-9]+ +[^[:space:]]' || true)"
+if [ "$ANCHOR_COUNT" -eq 0 ]; then
+  printf '%s\n' "$ANCHORS" | grep -Eq '^- none: +[^[:space:]]' || fail "Anchors needs an A<number> block or '- none: <reason>'"
+else
+  for field in "reader question" "evidence" "selected form" "takeaway" "caveat"; do
+    count="$(printf '%s\n' "$ANCHORS" | grep -Ec "^- $field:" || true)"
+    [ "$count" -ge "$ANCHOR_COUNT" ] || fail "Anchors needs '$field' for every anchor"
+  done
 fi
 
-# Contents block — need at least one "- NN <title>" section line.
-if has_block "Contents"; then
-  if ! printf '%s\n' "$SPEC" | grep -Eq '^- [0-9]+ +\S'; then
-    fail "Contents block present but no section lines (need '- 01 <title> — figures: ...')"
-  fi
-fi
+for anchor_id in $(printf '%s\n' "$STRUCTURE" | sed -n 's/^  - anchor: \(A[0-9][0-9]*\)$/\1/p'); do
+  printf '%s\n' "$ANCHORS" | grep -Eq "^### $anchor_id +" || fail "Structure references missing anchor: $anchor_id"
+done
+
+for source_id in $(printf '%s\n' "$STRUCTURE\n$ANCHORS" | grep -Eo 'S[0-9]+' | sort -u); do
+  printf '%s\n' "$SOURCE_IDS" | grep -Fxq "$source_id" || fail "plan references missing source: $source_id"
+done
+
+for field in "concept" "selected references" "borrow" "transform" "reject" "clone risk"; do
+  check_field "Design Direction" "$field"
+done
+
+for field in "locked" "guided" "open"; do check_field "Build Contract" "$field"; done
+
+ACCEPTANCE="$(block_text "Acceptance Tests")"
+printf '%s\n' "$ACCEPTANCE" | grep -Eq '^- \[ \] +[^[:space:]]' || fail "Acceptance Tests needs at least one unchecked test"
 
 if [ "$ERRORS" -eq 0 ]; then
-  f=absent; c=absent
-  has_block "Frame" && f=present
-  has_block "Contents" && c=present
-  echo "OK: plan valid (frame=$f, contents=$c)"
+  echo "OK: document plan contract valid"
   exit 0
 else
   echo "$ERRORS error(s) in plan"

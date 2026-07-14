@@ -1,34 +1,33 @@
 ---
-role: figure/structure reference for the report plan (not injected anywhere — there is no build stage)
-topic: cover page sizing, identity, and tagline discipline
+role: optional anchor-selection reference
+use_when: a deck, poster, print document, or long web document needs an entry surface
+do_not_use_when: the reader benefits from entering directly into status, evidence, or action
+style_risk: a mandatory hero makes operational documents look like marketing pages
 ---
 
 ## Cover is identity, not summary
 
 The cover answers "what is this?" at a glance — project name + brief tagline, nothing more. A reader should identify the project in 3 seconds; longer means the cover is doing page 2's work.
 
-## Scale rule (the 1/3 rule)
+## Entry-surface rule
 
-Cover hero text/numbers sit at roughly **1/3 the scale** of the in-report hero. A cover that competes visually with p2's hero numbers is too loud — the cover is a handshake, not a billboard.
-
-Concrete: if the in-report hero number is 96-116px (page-defining metric on p2/p3), the cover wordmark sits at ~32-48px and the tagline at body size (~16-18px). Not 116px display on the cover and another 116px on page 2.
-
-If the report has no oversized in-report hero (e.g., a brief register with subtle hierarchy), the cover wordmark sits at ~28-36px — never larger than the largest in-report headline.
+The entry surface should establish identity, scope, date or version when relevant, and the
+reader's next move. Its visual weight must not obscure the document's actual primary anchor.
+Exact scale and composition belong to the builder's open budget.
 
 ## Forbidden on cover
 
-- **Paragraph-shaped hero** (3+ lines of prose explaining what the project does) — essay leakage; the cover is not the place to explain
+- **Long explanatory prose** that should be the first content unit
 - **2x2 KPI checkbox blocks** — decorative unless the KPIs ARE the report's subject (e.g., earnings deck whose subject IS the quarter's metrics)
-- **Marketing-tagline subtitle** ("the bold reimagining of...", "redefining how...") — kills analytical authority
-- **Hero number prominent on cover** — only justified if the report's central finding IS the number itself (e.g., "$2.3B revenue" on an earnings deck)
+- **Unsupported promotional claim** that changes the document job
+- **Prominent metric without context** — use only when the metric is the central verified claim
 - **Editorial chrome that misleads** (e.g., "Vol. 01 · Issue 03") — only if the publication actually has issues; otherwise it's pretense
 
 ## Tagline craft
 
-- **Length**: <=8 words preferred; 15 max if technical payload genuinely demands it
-- **Voice**: active, declarative — no "is the X for Y" essay-phrases
-- **Content**: name the *category* of thing (plugin / framework / dataset / analysis / benchmark) + one verb-phrase for what it does
-- **Shape**: `"Project · category — single verb-phrase"` or `"Project: <one-line claim>"`
+- Keep it short enough to scan in the target medium.
+- Name the subject and the document's actual category or claim.
+- Prefer concrete language over generic promotional phrasing.
 
 | Good | Bad |
 |---|---|
@@ -41,6 +40,6 @@ If the report has no oversized in-report hero (e.g., a brief register with subtl
 - Project name (wordmark or text-set logotype)
 - Tagline (<=8 words ideally)
 - Optional: short metadata strip (version, date, author) at body size — chrome, not content
-- Optional: a single small mark / identifier — chrome only
+- Optional: a mark or identifier when it has real provenance
 
 That's it. If you want more, you want page 2.

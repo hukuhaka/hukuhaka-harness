@@ -1,10 +1,54 @@
 # Changelog
 
-All notable changes to hukuhaka-claude are documented here. The project follows
+All notable changes to hukuhaka-harness are documented here. The project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Plugin versions (`marketplace/<plugin>/.claude-plugin/plugin.json`) are
-independent — see those files for their own history.
+Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.json`)
+are independent from the repository version. Dual-host manifests share one
+plugin version.
+
+## Unreleased
+
+## [1.0.11] — 2026-07-14
+
+### Changed
+
+- Added a shared `--host claude|codex|both` installer. Codex installs now use
+  the native marketplace lifecycle and support idempotent install, update, and
+  removal alongside the existing Claude Code deployment path. The default
+  interactive flow asks for the target host before component selection, while
+  explicit non-interactive calls retain the existing Claude Code default.
+  Dual-host runs show each host's filtered plan and completion status.
+- Centralized component lifecycle and host support in `components.json`, and
+  changed the public exporter to allow-list individual consumer scripts rather
+  than publishing all of `scripts/` and removing private tools afterward.
+- Hardened installer and release lifecycle checks for macOS Bash 3.2, physical
+  path aliases, plugin-free Claude Code reinstalls, and idempotent version-pinned
+  Codex installs. Public branch and tag publication is now atomic.
+- Renamed the public distribution repository from `hukuhaka-claude` to
+  `hukuhaka-harness`; installer and plugin metadata now use the new URL.
+- Extended `scripts/refresh-officials.sh` to mirror official Codex, OpenAI API,
+  Apps SDK, and Workspace Agents Markdown sources alongside Claude Code docs.
+- **`hukuhaka-report-planner@0.4.0`** now turns reports and other visual-document
+  requests into evidence-backed build contracts. The shared Claude Code/Codex
+  workflow discovers the reader job and sources, derives structure and anchors,
+  selects at most three relevant references after forming a design concept, and
+  records locked/guided/open build decisions plus acceptance tests. Explicit plan
+  requests stop at `spec.md`; immediate artifact requests continue from it. Both
+  hosts write the shared contract under `.hukuhaka/reports/`, with legacy
+  `.claude/reports/` plans retained as a read-only fallback.
+- **`hukuhaka-project-mapper`** and **`hukuhaka-ltm`** are deprecated and remain
+  available only for explicit legacy Claude Code installs. Fresh interactive
+  installs and `--all` exclude them; explicit selection prints a warning.
+
+### Removed
+
+- Removed the standalone `hukuhaka-team` skill and its TEAM eval scenarios.
+
+### Fixed
+
+- Replaced the CI plugin-version guard's stale hard-coded project-mapper path
+  with a per-changed-plugin check, including Claude/Codex manifest parity.
 
 ## [1.0.10] — 2026-07-10
 
