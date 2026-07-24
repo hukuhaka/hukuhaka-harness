@@ -33,6 +33,20 @@ Keep repeated values aligned and preserve enough separation to follow a row with
 - Keep headers distinguishable and preserve the document's terminology.
 - Choose numeric and text roles for scan accuracy at the final size.
 
+## Diff tables (before / after)
+
+- Three-column core: `before | after | Δ` — the delta column is the finding; before/after
+  are its evidence
+- Δ column: semantic gain/loss pair with an explicit sign (`+12%`, `−3.4ms`), right-aligned,
+  tabular-nums. The arrow glyph is optional; the sign is not
+- Changed cells: subtle bg tint OR weight bump, never both; unchanged rows stay visible but
+  dimmed — deleting them hides the base rate
+- Long tables: collapse runs of unchanged rows into a single mono row (`… 14 unchanged …`)
+- Annotate the largest / most consequential delta — a diff table with 30 deltas and no
+  anchor makes the reader do the analysis
+- Config diffs (text, not numbers): show both values — changed value at weight 600, old
+  value dimmed; never truncate the old value away
+
 ## Don'ts
 
 - Decorative cells that obscure exact comparison

@@ -11,16 +11,25 @@ A document may need distinct color roles:
 
 - **Base:** canvas, ink, dividers, and quiet surfaces.
 - **Semantic:** status, comparison, category, sequence, or uncertainty.
-- **Emphasis:** the limited elements that need priority in the reading path.
+- **Emphasis:** the limited elements that need priority in the reading path. Emphasis reads
+  only while it is scarce — the fewer elements that share the role, the stronger each reads.
 
 The number and temperature of colors follow the evidence, brand constraints, medium, and
 design concept. Do not infer them from a document label such as report or dashboard.
+
+## Contrast targets
+
+- Screen body text: ≥4.5:1 against its surface.
+- Large display text, chart strokes, and other essential non-text marks: ≥3:1.
+- Quiet chrome (dividers, metadata) may sit below these targets only when it carries no
+  meaning the reader must recover.
 
 ## Print / PDF contrast
 
 If the report will be printed or exported to PDF:
 
-- Plan sufficient contrast for the target text size and accessibility requirement.
+- Body ink at ≥7:1 against the paper; hairlines and dividers need more weight or darkness
+  than their screen equivalents.
 - Semantic colors must remain distinguishable in greyscale (red vs green fails — pair with shape or label)
 - Important emphasis must still read on a monochrome printer when print is in scope.
 

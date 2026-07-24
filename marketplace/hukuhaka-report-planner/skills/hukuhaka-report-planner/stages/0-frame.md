@@ -38,7 +38,8 @@ open craft references in this stage.
    measurement gate, or fallback. Otherwise make the assumption explicit and continue.
 
 6. **Write** `.hukuhaka/reports/tmp-draft/spec.md` with `## Document Model` and the initial
-   `## Evidence` block from `references/spec-schema.md`.
+   `## Evidence` block from `references/spec-schema.md`. A stale `tmp-draft/` left by an
+   abandoned plan is overwritten; it is a draft, not a record.
 
 ## Required reading
 

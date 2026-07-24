@@ -22,6 +22,27 @@ A scan-oriented artifact usually needs visible grouping and changes in emphasis.
 surface may instead need deliberately consistent density. Derive rhythm from reading behavior;
 do not require a hero metric or a breathable band on every page.
 
+## Grouping scale
+
+- Proximity is the grouping signal: the gap inside a group must be clearly smaller than the
+  gap between groups — a 2× step is a workable floor.
+- A group's label must sit visibly closer to its own group than to the previous one.
+- Dense comparison surfaces (tables, tile grids) group by alignment and shared edges more
+  than by whitespace; do not inflate them to match prose rhythm.
+
+## Margins by medium
+
+Workable defaults the builder may adapt to the concept; the planner records deviations only
+when an anchor depends on them.
+
+- **Deck (16:9):** keep a consistent safe margin of roughly 4–6% of the slide width on all
+  sides. Content crosses it only as a deliberate full-bleed device, never by overflow —
+  when content presses the margin, split the slide.
+- **Print/PDF:** set page margins for the trim, and keep running headers or footers out of
+  the content rhythm.
+- **Web:** margins follow the capped measure (`craft/typography.md`); center the column
+  rather than stretching it.
+
 ## Anti-defaults and failure modes
 
 - Section gap = paragraph gap — sections dissolve into prose

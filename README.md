@@ -14,11 +14,11 @@ imply that a Claude Code plugin is portable to Codex.
 
 | Component | Version | Status | Hosts | What it gives you |
 |-----------|---------|--------|-------|-------------------|
-| **hukuhaka-report-planner** | `0.4.0` | Supported | Claude Code, Codex | Researches visual-document requests, derives reader-focused structure and anchors, and records a validated build contract in `spec.md`. Explicit plan requests stop there; artifact requests continue from the contract. |
+| **hukuhaka-report-planner** | `0.5.0` | Supported | Claude Code, Codex | Researches visual-document requests and records a validated `spec.md`. Explicit plan requests stop there; artifact requests delegate construction and visual verification to one designer subagent. |
+| **hukuhaka-engineering-plan** | `0.1.0` | Supported | Claude Code, Codex | Produces repository-grounded implementation plans with explicit contracts, counterexample checks, and requirement-to-verification mapping. |
 | **hukuhaka-codex** | `0.4.0` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
-| **hukuhaka-project-mapper** | `1.1.2` | Deprecated | Claude Code only | Legacy `.claude/` codebase-documentation generator. Available by explicit install; critical fixes only. |
-| **hukuhaka-ltm** | `0.5.0` | Deprecated | Claude Code only | Legacy three-tier long-term memory plugin. Available by explicit install; critical fixes only. |
-| **CLAUDE.md template** | — | Supported | Claude Code only | Spec-first router for `~/.claude/CLAUDE.md`. |
+| **CLAUDE.md template** | — | Supported | Claude Code only | Shared scoped-change and verification policy with Claude-specific `spec.md` sign-off and attribution-free commits, deployed to `~/.claude/CLAUDE.md`. |
+| **AGENTS.md template** | — | Supported | Codex only | Codex policy for scoped change previews, evidence-backed verification, compact-resilient task state, and a safe local Git lifecycle, merged into `$CODEX_HOME/AGENTS.md`. |
 
 Optional third-party extras (rtk, ccstatusline, agent-teams flag) ride along with the installer.
 
@@ -49,13 +49,34 @@ install, and locally modified managed files require an explicit `--force`.
 Optional extras are kept outside the core manifest and are never removed by a
 core uninstall.
 
+The Claude and Codex instruction templates are separate sources. Both
+distinguish analysis from mutation authority, preserve pre-existing work, and
+keep push and other external actions explicitly opt-in. The Claude template
+additionally protects `spec.md` contracts and attribution-free commits. The
+Codex installer merges only a marked managed block into
+`$CODEX_HOME/AGENTS.md`, preserves user text outside that block, and removes
+only the managed block on uninstall. `CODEX_HOME` defaults to `~/.codex`.
+
 ### Interactive install
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh | bash
 ```
 
-The installer is interactive by default (host selector → component selector → dependency preflight → optional extras). Choose Claude Code, Codex, or both. Fresh installs and `--all` select supported components only. Deprecated components remain visible but default off; existing selections are preserved on re-run.
+The installer is interactive by default (host selector → component selector → dependency preflight → optional host configuration). Choose Claude Code, Codex, or both. Existing selections are preserved on re-run when the component is still distributed.
+
+Without a TTY and without explicit selection flags, the installer keeps the
+current components and adds supported defaults for the selected host. The
+non-interactive default host remains Claude Code. Use `--add` for an incremental
+addition or `--components` to declare the complete desired component set.
+
+When an interactive install includes Codex, the installer can configure
+recommended user-level defaults in `~/.codex/config.toml`. The English wizard
+asks about reasoning defaults, concurrent agents, CLI status and notifications,
+sleep prevention, and web-search mode. It preserves unknown keys, keeps
+conflicting values by default, shows a unified diff, asks for final approval,
+backs up an existing file as `config.toml.hukuhaka-backup`, and validates the
+result with the installed Codex CLI before writing.
 
 ### Claude Code
 
@@ -63,13 +84,9 @@ Non-interactive variants retain Claude Code as the default host:
 
 ```bash
 curl -fsSL .../install.sh | bash -s -- --all
-curl -fsSL .../install.sh | bash -s -- --components hukuhaka-report-planner,hukuhaka-codex,claude-md
-curl -fsSL .../install.sh | bash -s -- --components hukuhaka-project-mapper
+curl -fsSL .../install.sh | bash -s -- --components hukuhaka-report-planner,hukuhaka-engineering-plan,hukuhaka-codex,claude-md
 curl -fsSL .../install.sh | bash -s -- --uninstall
 ```
-
-The explicit `hukuhaka-project-mapper` example is a legacy install and prints a
-deprecation warning.
 
 ### Codex
 
@@ -81,16 +98,30 @@ curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scri
   | bash -s -- --host codex --all
 ```
 
+Explicit installs remain non-interactive unless configuration is requested.
+`--configure-codex` requires a TTY:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh \
+  | bash -s -- --host codex --all --configure-codex
+```
+
+These preferences are user-owned and remain in place if harness plugins are
+later removed.
+
 The equivalent native Codex commands are:
 
 ```bash
 codex plugin marketplace add hukuhaka/hukuhaka-harness
 codex plugin add hukuhaka-report-planner@hukuhaka-harness
+codex plugin add hukuhaka-engineering-plan@hukuhaka-harness
 ```
 
 The Codex marketplace intentionally exposes only the components with native
-Codex packaging. Invoke the planner explicitly as `$hukuhaka-report-planner`,
-or let Codex select it from its description.
+Codex packaging. Invoke the document planner as `$hukuhaka-report-planner` and
+the engineering planner as `$engineering-plan`, or let Codex select them from
+their descriptions. The `agents-md` template is installed by this repository's
+host-aware installer rather than the native plugin marketplace.
 
 ### Both hosts
 
@@ -113,7 +144,22 @@ contract that either host can consume. Existing `.claude/reports/` plans remain 
 read-only fallback. The shared workflow discovers the reader job and evidence, explores
 the document structure and anchors, then locks a selective-reference design and
 build contract. Explicit planning requests stop at the validated spec; immediate
-artifact requests use it as a preflight and continue building.
+artifact requests use it as a preflight and delegate construction plus visual
+verification to one designer subagent.
+
+## Engineering plan workflow
+
+The same portable Skill is packaged for both hosts:
+
+```text
+Claude Code: /hukuhaka-engineering-plan:engineering-plan
+Codex:       $engineering-plan
+```
+
+It inspects the repository before planning, defines observable behavior before
+file changes, challenges important invariants with concrete counterexamples,
+revises contradictions in the main plan, and ends with `Ready`,
+`Ready with assumptions`, or `Blocked`.
 
 ## Design principles
 

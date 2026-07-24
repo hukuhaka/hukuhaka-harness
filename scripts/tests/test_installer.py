@@ -10,6 +10,7 @@ from scripts.harness_installer.claude import ClaudeDeployment
 from scripts.harness_installer.errors import DriftError, InstallerError, StateError
 from scripts.harness_installer.extras import ExtrasSettings
 from scripts.harness_installer.filesystem import FileTransaction
+from scripts.harness_installer.install import Installer, build_parser
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -175,9 +176,12 @@ class InstallerTestCase(unittest.TestCase):
 
     def test_ghost_registry_and_directory_are_removed(self) -> None:
         plugins = self.claude / "plugins"
-        ghost_dir = plugins / "hukuhaka-plugin" / "renamed-plugin"
-        ghost_dir.mkdir(parents=True)
-        (ghost_dir / "old.txt").write_text("old")
+        marketplace = plugins / "hukuhaka-plugin"
+        removed_names = ("hukuhaka-ltm", "hukuhaka-project-mapper")
+        for name in removed_names:
+            ghost_dir = marketplace / name
+            ghost_dir.mkdir(parents=True)
+            (ghost_dir / "old.txt").write_text("old")
         registry = plugins / "installed_plugins.json"
         registry.parent.mkdir(parents=True, exist_ok=True)
         registry.write_text(
@@ -185,17 +189,23 @@ class InstallerTestCase(unittest.TestCase):
                 {
                     "version": 2,
                     "plugins": {
-                        "renamed-plugin@hukuhaka-plugin": [
-                            {"scope": "user", "installPath": str(ghost_dir), "version": "0"}
+                        "{}@hukuhaka-plugin".format(name): [
+                            {
+                                "scope": "user",
+                                "installPath": str(marketplace / name),
+                                "version": "0",
+                            }
                         ]
+                        for name in removed_names
                     },
                 }
             )
         )
         self.deployment().deploy()
         installed = json.loads(registry.read_text())["plugins"]
-        self.assertNotIn("renamed-plugin@hukuhaka-plugin", installed)
-        self.assertFalse(ghost_dir.exists())
+        for name in removed_names:
+            self.assertNotIn("{}@hukuhaka-plugin".format(name), installed)
+            self.assertFalse((marketplace / name).exists())
 
     def test_dry_run_creates_no_state(self) -> None:
         self.deployment(dry_run=True).deploy()
@@ -222,6 +232,74 @@ class InstallerTestCase(unittest.TestCase):
             ExtrasSettings(self.claude).mutate("migrate-legacy", dry_run=False)
         self.assertTrue(legacy.exists())
         self.assertEqual("{broken", settings.read_text())
+
+
+class InstallerSelectionTests(unittest.TestCase):
+    def installer(self, host: str = "claude", *selection: str) -> Installer:
+        arguments = [
+            "--repo-root",
+            str(ROOT),
+            "--host",
+            host,
+            "--skip-preflight",
+            "--skip-extras",
+            *selection,
+        ]
+        args = build_parser().parse_args(arguments)
+        args.version_explicit = False
+        args.selector_used = not bool(selection)
+        return Installer(args)
+
+    def test_no_tty_preserves_current_and_adds_supported_defaults(self) -> None:
+        installer = self.installer()
+        with mock.patch.object(
+            installer, "current_components", return_value={"agent-teams"}
+        ), mock.patch.object(installer, "_tty_available", return_value=False), mock.patch.object(
+            installer, "_interactive_select"
+        ) as interactive:
+            selected = installer.choose_components()
+
+        self.assertEqual(
+            [
+                "hukuhaka-report-planner",
+                "hukuhaka-engineering-plan",
+                "hukuhaka-codex",
+                "claude-md",
+                "agent-teams",
+            ],
+            selected,
+        )
+        self.assertFalse(installer.args.selector_used)
+        interactive.assert_not_called()
+
+    def test_explicit_selection_does_not_probe_tty(self) -> None:
+        installer = self.installer(
+            "claude",
+            "--components",
+            "hukuhaka-engineering-plan",
+        )
+        with mock.patch.object(installer, "current_components", return_value=set()), mock.patch.object(
+            installer, "_tty_available", side_effect=AssertionError("TTY probe was unexpected")
+        ):
+            self.assertEqual(["hukuhaka-engineering-plan"], installer.choose_components())
+
+    def test_removed_legacy_components_are_unknown(self) -> None:
+        for name in ("hukuhaka-ltm", "hukuhaka-project-mapper"):
+            installer = self.installer("claude", "--components", name)
+            with self.assertRaisesRegex(InstallerError, "unknown component '{}'".format(name)):
+                installer.choose_components()
+
+    def test_no_tty_codex_fallback_does_not_run_configuration_wizard(self) -> None:
+        installer = self.installer("codex")
+        with mock.patch.object(
+            installer, "current_components", return_value=set()
+        ), mock.patch.object(installer, "_tty_available", return_value=False), mock.patch.object(
+            installer, "_deploy_codex", return_value=True
+        ), mock.patch.object(installer, "_configure_codex", return_value=True) as configure:
+            self.assertEqual(0, installer.run())
+
+        self.assertFalse(installer.args.selector_used)
+        configure.assert_not_called()
 
 
 if __name__ == "__main__":

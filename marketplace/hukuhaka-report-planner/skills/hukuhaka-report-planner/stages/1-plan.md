@@ -48,9 +48,16 @@ a fallback, leave it untouched, and write the continued draft to `.hukuhaka/repo
    and anchor treatment. Generate an alternative only when it changes at least structure,
    typography voice, or anchor grammar; color swaps are not alternatives.
 
+   A concept is two or three concrete sentences, e.g.: "Calm, dense decision surface:
+   near-monochrome chrome with a single cool accent reserved for the recommended route;
+   tabular numerals and hairline rules carry the comparisons; prose stays brief between
+   anchors, and each unit leads with its takeaway line so a scanning reader collects the
+   argument from takeaways alone."
+
 5. **Select references.** Use `reference-index.md` to choose zero to three craft files that
-   address specific unresolved design problems. Fixtures are off by default. For each selected
-   source record:
+   address specific unresolved design problems. User-supplied `DESIGN.md` files and named
+   external style targets are off by default unless the user explicitly selects them. For each
+   selected source record:
    - mechanism borrowed;
    - how it is transformed for this document;
    - what is rejected;
@@ -82,7 +89,8 @@ REFERENCES: <zero to three selected sources with borrow/transform/reject>
 
 ## Failure modes
 
-- Reading all craft or fixture files before forming a concept.
+- Reading all craft files or an entire `DESIGN.md` before forming a concept.
+- Loading a project `DESIGN.md` merely because it exists or copying its whole website grammar.
 - Treating a chart name as an anchor specification.
 - Adding visuals without evidence or a reader question.
 - Forcing a visual into every unit.

@@ -7,7 +7,7 @@ This skill produces one planning artifact at
 ```
 
 An explicit plan request stops here. An immediate artifact request uses this validated file
-as a preflight contract and continues to build.
+as a preflight contract and delegates construction through `references/build-handoff.md`.
 
 `<short-name>` is derived in Stage 2 from the subject: lowercase kebab-case, at most 24
 characters. Stage 0 creates `.hukuhaka/reports/tmp-draft/spec.md`; Stage 2 renames the
@@ -97,7 +97,9 @@ the planner does not dual-write, delete, or silently migrate legacy files.
 - Every non-prose anchor has evidence, selected form, takeaway, and caveat.
 - A prose-only document uses `- none:` in Anchors and explains why.
 - Design Direction starts without reference names, then records zero to three selected
-  references and the borrow/transform/reject decisions.
+  references, including an explicitly supplied `DESIGN.md` path when applicable, and the
+  borrow/transform/reject decisions.
 - Build Contract guides visual language without specifying CSS tokens or fixed components.
 - `validate-spec.sh` is required before handoff. It checks structure, not semantic or visual
   quality; recorded acceptance tests still have to be run against the finished artifact.
+- Build-preflight delegates one designer and keeps `spec.md` read-only during construction.

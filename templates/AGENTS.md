@@ -52,7 +52,6 @@ Task state tracks progress; it does not authorize work beyond the user’s reque
 - The user’s latest explicit request defines the active scope. Later narrowing overrides earlier plans and approvals. Ask before expanding it.
 - Preserve pre-existing and unrelated user work. Do not discard, replace, reset, restore, clean, stash, rewrite, or include it in task commits without explicit confirmation.
 - Do not delete files or pre-existing branches without explicit confirmation.
-- Do not change `spec.md` contracts without explicit sign-off.
 - The local Git workflow below is part of authorized implementation work. Push, publish, release, deploy, communicate externally, or modify external systems only when explicitly requested.
 - Never claim a check was run or a result verified when it was not.
 
@@ -67,5 +66,3 @@ For authorized implementation work, use this local lifecycle:
 5. After successful verification, switch to the target branch and merge with `--ff-only`. Confirm that every task commit is reachable from the target branch, then delete only the working branch created for the current task.
 
 If a fast-forward merge is not possible, stop and report the divergence instead of rewriting history or creating a merge commit.
-
-No Co-authored-by or co-worker attributions in commit messages.

@@ -15,6 +15,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from .claude import ClaudeDeployment
 from .codex import CodexDeployment
+from .codex_config import CodexConfigWizard
+from .codex_guidance import CodexGuidanceDeployment
+from .codex_paths import resolve_codex_home
 from .errors import InstallerError, StateError
 from .filesystem import load_json
 from .state import Manifest
@@ -161,16 +164,19 @@ class Installer:
         return data
 
     def _current_codex_components(self) -> Tuple[bool, Set[str]]:
-        if shutil.which("codex") is None:
-            return False, set()
-        data = self._run_json(("codex", "plugin", "list", "--json"), stage="read-codex-state")
-        names = {
-            str(plugin["name"])
-            for plugin in data.get("installed", [])
-            if isinstance(plugin, dict)
-            and plugin.get("marketplaceName") == self.catalog.get("marketplaces", {}).get("codex")
-            and plugin.get("name")
-        }
+        names = set()  # type: Set[str]
+        codex_home = resolve_codex_home()
+        if (codex_home / ".hukuhaka-guidance-manifest.json").is_file():
+            names.add("agents-md")
+        if shutil.which("codex") is not None:
+            data = self._run_json(("codex", "plugin", "list", "--json"), stage="read-codex-state")
+            names.update(
+                str(plugin["name"])
+                for plugin in data.get("installed", [])
+                if isinstance(plugin, dict)
+                and plugin.get("marketplaceName") == self.catalog.get("marketplaces", {}).get("codex")
+                and plugin.get("name")
+            )
         return bool(names), names
 
     def current_components(self) -> Set[str]:
@@ -304,6 +310,21 @@ class Installer:
             selected_set = (current | set(add)) - set(remove)
             order = [str(component["name"]) for component in available]
             selected = [name for name in order if name in selected_set]
+        elif not self._tty_available():
+            defaults = {
+                str(component["name"])
+                for component in available
+                if component.get("default") is True
+                and component.get("lifecycle") == "supported"
+            }
+            selected_set = current | defaults
+            order = [str(component["name"]) for component in available]
+            selected = [name for name in order if name in selected_set]
+            self.args.selector_used = False
+            print(
+                "No TTY detected; preserving current components and adding supported defaults.",
+                file=sys.stderr,
+            )
         else:
             selected = self._interactive_select(current, preflight_data)
         selected = self._validate_component_names(selected)
@@ -433,44 +454,95 @@ class Installer:
 
     def _deploy_codex(self, components: Sequence[str]) -> bool:
         try:
-            source = str(self.repo_root) if self.args.local_source else "hukuhaka/hukuhaka-harness"
-            CodexDeployment(
-                components,
-                source,
-                str(self.catalog.get("marketplaces", {}).get("codex", "hukuhaka-harness")),
+            plugin_components = [
+                name for name in components if self.component_map[name].get("kind") == "plugin"
+            ]
+            if plugin_components:
+                source = (
+                    str(self.repo_root)
+                    if self.args.local_source
+                    else "hukuhaka/hukuhaka-harness"
+                )
+                CodexDeployment(
+                    plugin_components,
+                    source,
+                    str(self.catalog.get("marketplaces", {}).get("codex", "hukuhaka-harness")),
+                    self.version,
+                    version_explicit=self.args.version_explicit,
+                    local_source=self.args.local_source,
+                    dry_run=self.args.dry_run,
+                ).deploy()
+            CodexGuidanceDeployment(
+                self.repo_root / "templates" / "AGENTS.md",
+                resolve_codex_home(),
                 self.version,
-                version_explicit=self.args.version_explicit,
-                local_source=self.args.local_source,
+                enabled="agents-md" in components,
                 dry_run=self.args.dry_run,
+                force=self.args.force,
             ).deploy()
             return True
         except InstallerError as exc:
             print(exc.render(), file=sys.stderr)
             return False
 
-    def _uninstall_codex(self) -> bool:
-        if shutil.which("codex") is None:
-            print("Error: codex CLI is required for --host codex.", file=sys.stderr)
-            return False
-        data = self._run_json(("codex", "plugin", "list", "--json"), stage="codex-uninstall")
-        marketplace = self.catalog.get("marketplaces", {}).get("codex")
-        ids = [
-            str(plugin["pluginId"])
-            for plugin in data.get("installed", [])
-            if isinstance(plugin, dict)
-            and plugin.get("marketplaceName") == marketplace
-            and plugin.get("pluginId")
-        ]
-        if not ids:
-            print("Codex: no installed hukuhaka-harness plugins.")
-            return True
-        for plugin_id in ids:
-            command = ["codex", "plugin", "remove", plugin_id, "--json"]
-            if not self.args.dry_run:
-                subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
-            print("  [ok] removed {}".format(plugin_id))
-        print("Codex: removed {} plugin(s); marketplace registration preserved.".format(len(ids)))
+    def _configure_codex(self) -> bool:
+        if not self._tty_available():
+            raise InstallerError(
+                "Codex global configuration requires a TTY",
+                stage="codex-config",
+                operation="open-tty",
+            )
+        with open("/dev/tty", "r+") as tty:
+            CodexConfigWizard(
+                resolve_codex_home(),
+                tty,
+                dry_run=self.args.dry_run,
+            ).run()
         return True
+
+    def _uninstall_codex(self) -> bool:
+        success = True
+        if shutil.which("codex") is None:
+            print(
+                "Warning: codex CLI not found; plugin removal was skipped.",
+                file=sys.stderr,
+            )
+        else:
+            data = self._run_json(("codex", "plugin", "list", "--json"), stage="codex-uninstall")
+            marketplace = self.catalog.get("marketplaces", {}).get("codex")
+            ids = [
+                str(plugin["pluginId"])
+                for plugin in data.get("installed", [])
+                if isinstance(plugin, dict)
+                and plugin.get("marketplaceName") == marketplace
+                and plugin.get("pluginId")
+            ]
+            for plugin_id in ids:
+                command = ["codex", "plugin", "remove", plugin_id, "--json"]
+                if not self.args.dry_run:
+                    subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
+                print("  [ok] removed {}".format(plugin_id))
+            if ids:
+                print(
+                    "Codex: removed {} plugin(s); marketplace registration preserved.".format(
+                        len(ids)
+                    )
+                )
+            else:
+                print("Codex: no installed hukuhaka-harness plugins.")
+        try:
+            CodexGuidanceDeployment(
+                self.repo_root / "templates" / "AGENTS.md",
+                resolve_codex_home(),
+                self.version,
+                enabled=False,
+                dry_run=self.args.dry_run,
+                force=self.args.force,
+            ).uninstall()
+        except InstallerError as exc:
+            print(exc.render(), file=sys.stderr)
+            success = False
+        return success
 
     def uninstall(self) -> int:
         results = []
@@ -521,6 +593,12 @@ class Installer:
             claude_status = self._deploy_claude(claude_components)
         if "codex" in self._selected_hosts() and codex_components:
             codex_status = self._deploy_codex(codex_components)
+            if codex_status and (self.args.configure_codex or self.args.selector_used):
+                try:
+                    codex_status = self._configure_codex()
+                except InstallerError as exc:
+                    print(exc.render(), file=sys.stderr)
+                    codex_status = False
 
         if (
             "claude" in self._selected_hosts()
@@ -578,6 +656,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--print-deps", action="store_true")
     parser.add_argument("--skip-extras", action="store_true")
     parser.add_argument("--extras")
+    parser.add_argument(
+        "--configure-codex",
+        action="store_true",
+        help="interactively configure recommended user-level Codex settings",
+    )
     parser.add_argument("--force", action="store_true")
     return parser
 

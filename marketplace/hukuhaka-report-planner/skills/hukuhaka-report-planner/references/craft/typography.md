@@ -20,6 +20,27 @@ relationships and constraints; do not prescribe a font family merely to avoid a 
 | Labels/metadata | Are taxonomy and status distinct without dominating content? |
 | Numbers/code | Do alignment and exact syntax remain legible? |
 
+## Measure
+
+- Body prose reads best at roughly 45–75 characters per line; cap the measure on wide
+  viewports instead of letting text run edge to edge.
+- Dense reference tables, code, and wide figures may exceed the body measure, but give them
+  their own surface (scroll container, full-width band) rather than widening the prose
+  column to match.
+- A very short measure (under ~35 characters) breaks ragged-right reading; widen the column
+  or reduce the type size before resorting to hyphenation.
+
+## Hierarchy ladder
+
+- Build hierarchy from a small scale whose adjacent steps are distinguishable at a glance;
+  if two levels are hard to tell apart, merge them or widen the ratio.
+- Documents usually need modest steps (about 1.2–1.33 between levels); decks and posters
+  are read at distance and need display sizes several times body size.
+- Create only the levels the structure uses — an unused heading level weakens the ones the
+  reader must learn.
+- Size, weight, spacing, and case are separate hierarchy channels; spending several at once
+  on one level burns contrast the ladder may need elsewhere.
+
 ## Selection constraints
 
 - Verify glyph coverage for the document language and symbols.

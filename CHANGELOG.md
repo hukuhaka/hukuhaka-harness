@@ -7,6 +7,51 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.0.13] — 2026-07-24
+
+### Added
+
+- **`hukuhaka-engineering-plan@0.1.0`** adds a dual-host Skill for
+  repository-grounded engineering plans. It defines behavioral contracts before
+  file changes, tests important invariants with concrete counterexamples, and
+  maps material requirements to verifiable evidence.
+- Added a separate Codex `AGENTS.md` template. The installer merges it into
+  `$CODEX_HOME/AGENTS.md` as a managed block without replacing user-owned text.
+  Both global instruction templates now ground decisions in inspected evidence,
+  preview consequential changes, preserve task state across compaction, protect
+  pre-existing work, and use a verified local branch/commit/fast-forward
+  lifecycle. Push and other external actions remain explicitly opt-in, while
+  the Claude template retains its `spec.md` and attribution rules.
+- **`hukuhaka-report-planner@0.5.0`** adds a portable `artifact-designer` skill.
+  Immediate artifact requests now delegate construction and direct visual inspection
+  to one designer subagent after `spec.md` validates; plan requests still stop at the
+  contract. Claude Code ships a named designer agent, while Codex uses the same skill
+  through a write-capable worker adapter. User-supplied `DESIGN.md` files are explicit
+  inputs rather than auto-loaded runtime fixtures. The handoff now carries selected
+  craft references explicitly, and the reference library covers dashboards, decks,
+  layouts, plots, screenshots, and timing diagrams without forcing a house style.
+- Added an optional English Codex global-configuration wizard for interactive
+  installs and the explicit `--configure-codex` path. It configures selected
+  reasoning, agent, CLI, notification, sleep, and search preferences while
+  preserving existing user settings, previewing the diff, backing up the
+  prior file, and validating the result before writing. New reasoning-effort
+  selections default to `medium`.
+
+### Fixed
+
+- Headless installs with no component-selection flags now preserve the current
+  selection and add supported defaults instead of failing for lack of a TTY.
+  Explicit `--configure-codex` requests still require an interactive terminal.
+
+### Removed
+
+- Removed the bundled Figma marketing-study fixture from the report planner. A pinned
+  IBM `DESIGN.md` remains private eval input only and does not consume runtime context.
+- Removed the deprecated `hukuhaka-project-mapper` and `hukuhaka-ltm` packages
+  from the marketplace and installer catalog. Explicit selection now reports an
+  unknown component; upgrading an existing hukuhaka installation removes their
+  stale marketplace directories and registry entries.
+
 ## [1.0.12] — 2026-07-14
 
 ### Changed

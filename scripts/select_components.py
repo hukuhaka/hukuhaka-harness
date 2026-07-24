@@ -68,12 +68,13 @@ GROUP_PATHS = {
     },
     "codex": {
         "plugin": "Codex plugin marketplace",
+        "template": "$CODEX_HOME/AGENTS.md",
     },
     "both": {
         "plugin": "Claude Code / Codex native plugin stores",
         "skill": "Claude Code skill store",
         "feature": "Claude Code settings",
-        "template": "~/.claude/CLAUDE.md",
+        "template": "~/.claude/CLAUDE.md / $CODEX_HOME/AGENTS.md",
     },
 }
 
@@ -81,7 +82,7 @@ GROUP_NAMES = {
     "plugin": "Plugins",
     "skill": "Skills",
     "feature": "Features",
-    "template": "Template",
+    "template": "Templates",
 }
 
 

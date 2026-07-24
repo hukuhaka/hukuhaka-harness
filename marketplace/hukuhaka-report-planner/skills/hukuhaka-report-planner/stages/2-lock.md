@@ -42,7 +42,9 @@ re-deciding the document's meaning.
    subject rather than the output form.
 
 7. **Finalize and validate.** Rename `.hukuhaka/reports/tmp-draft/` to
-   `.hukuhaka/reports/<short-name>/`, write the complete schema, and run:
+   `.hukuhaka/reports/<short-name>/`, write the complete schema, and run the validator
+   below. If `<short-name>/` already exists, confirm whether this plan revises it;
+   otherwise derive a distinct name rather than overwriting a finished spec.
 
    ```bash
    bash "<resolved-skill-directory>/scripts/validate-spec.sh" \
@@ -54,9 +56,10 @@ re-deciding the document's meaning.
 
 8. **Handoff by invocation mode.**
    - `plan`: report the validated spec path and stop.
-   - `build-preflight`: continue building in the same task. Read the final spec first, preserve
-     `locked`, stay within `guided`, and exercise freedom only in `open`. Run the recorded
-     acceptance tests against the finished artifact.
+   - `build-preflight`: read `references/build-handoff.md`, delegate the validated spec, its
+     source paths, and the spec's selected craft references resolved to absolute paths to one
+     designer subagent, wait for the build receipt, and check that every recorded acceptance
+     test was run. Do not build in the planner context.
 
 ## Failure modes
 
@@ -64,3 +67,4 @@ re-deciding the document's meaning.
 - Leaving core decisions in `open` and forcing the builder to reinterpret them.
 - Treating validator success as semantic or visual proof.
 - Building before the final spec passes validation.
+- Building in the parent after delegating or running multiple competing designers.

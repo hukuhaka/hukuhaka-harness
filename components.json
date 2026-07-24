@@ -20,6 +20,20 @@
       }
     },
     {
+      "name": "hukuhaka-engineering-plan",
+      "kind": "plugin",
+      "lifecycle": "supported",
+      "default": true,
+      "hosts": {
+        "claude": {
+          "manifest": "marketplace/hukuhaka-engineering-plan/.claude-plugin/plugin.json"
+        },
+        "codex": {
+          "manifest": "marketplace/hukuhaka-engineering-plan/.codex-plugin/plugin.json"
+        }
+      }
+    },
+    {
       "name": "hukuhaka-codex",
       "kind": "plugin",
       "lifecycle": "supported",
@@ -27,28 +41,6 @@
       "hosts": {
         "claude": {
           "manifest": "marketplace/hukuhaka-codex/.claude-plugin/plugin.json"
-        }
-      }
-    },
-    {
-      "name": "hukuhaka-project-mapper",
-      "kind": "plugin",
-      "lifecycle": "deprecated",
-      "default": false,
-      "hosts": {
-        "claude": {
-          "manifest": "marketplace/hukuhaka-project-mapper/.claude-plugin/plugin.json"
-        }
-      }
-    },
-    {
-      "name": "hukuhaka-ltm",
-      "kind": "plugin",
-      "lifecycle": "deprecated",
-      "default": false,
-      "hosts": {
-        "claude": {
-          "manifest": "marketplace/hukuhaka-ltm/.claude-plugin/plugin.json"
         }
       }
     },
@@ -61,6 +53,17 @@
       "path": "templates/CLAUDE.md",
       "hosts": {
         "claude": {}
+      }
+    },
+    {
+      "name": "agents-md",
+      "kind": "template",
+      "lifecycle": "supported",
+      "default": true,
+      "description": "Scope-bound guidance ($CODEX_HOME/AGENTS.md)",
+      "path": "templates/AGENTS.md",
+      "hosts": {
+        "codex": {}
       }
     },
     {

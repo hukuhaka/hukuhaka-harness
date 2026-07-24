@@ -12,6 +12,10 @@ hand-authored SVG, diagram library, Mermaid source, HTML/CSS layout, canvas, or 
 may be appropriate depending on complexity, reproducibility, accessibility, and medium. The
 planner records those constraints but does not mandate the implementation.
 
+Flow-with-quantity diagrams, swimlanes, and event/duration timelines belong to this family
+when their relationships answer the reader question. For events and durations on a time axis,
+use `timing-diagrams.md` to specify the timing semantics before choosing implementation.
+
 ## Structural requirements
 
 - Define what nodes, edges, regions, states, and direction mean.

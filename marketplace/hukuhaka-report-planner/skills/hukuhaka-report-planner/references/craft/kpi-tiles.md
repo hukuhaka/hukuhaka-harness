@@ -24,6 +24,31 @@ A useful metric presentation usually includes:
 Scale, alignment, grouping, and whether metrics appear as tiles, a table, inline text, or a
 chart belong to the document-specific design direction.
 
+## Hero ladder
+
+A metric presentation is a size ladder, not one big number:
+
+1. **Value** — the largest element; readable before anything else on the surface.
+2. **Unit** — set with the value but visibly smaller and lighter (roughly 40–60% of the
+   value size), so `ms`, `%`, or a currency mark reads as part of the number without
+   competing with it.
+3. **Label and definition** — label size; the value must survive being read first.
+4. **Delta** — a compact chip near the value: explicit sign, baseline, and direction label,
+   using the document's semantic pair.
+5. **Source and caveat** — metadata size, adjacent, never inside the value's visual field.
+
+For a hero metric the value is usually 3× the label size or more; a tile grid uses a
+shorter ladder so tiles compare instead of shouting. Decks scale the ladder up — one hero
+per slide reads farther than a grid of four.
+
+## Tile grids
+
+- Align value baselines and decimal points across tiles so the row scans as one comparison.
+- Give equal-importance metrics equal size; give the decision metric the hero treatment
+  instead of enlarging everything.
+- Three to five tiles per row is the practical scan limit; past that, the evidence wants a
+  table (`tables.md`).
+
 ## Don'ts
 
 - Value without unit, period, source, or comparison basis

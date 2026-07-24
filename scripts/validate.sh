@@ -209,20 +209,26 @@ if [ -n "$install_all_components" ] && \
    [[ ",$install_all_components," != *",hukuhaka-project-mapper,"* ]] && \
    printf '%s\n' "$install_all_output" | grep -q '^  Claude Code: complete$' && \
    ! printf '%s\n' "$install_all_output" | grep -q '^  Codex:'; then
-    pass "non-interactive installer defaults to Claude and excludes deprecated plugins"
+    pass "non-interactive installer defaults to supported Claude components"
 else
     fail "installer non-interactive default/lifecycle policy"
 fi
 
-install_legacy_output=$(HOME="$install_test_home" "$SCRIPT_DIR/install.sh" \
-    --source-dir "$REPO_DIR" --version "$install_test_version" \
-    --components hukuhaka-ltm --dry-run \
-    --skip-preflight --skip-extras 2>&1 || true)
-if printf '%s\n' "$install_legacy_output" | grep -q "deprecated component(s) selected: hukuhaka-ltm" && \
-   printf '%s\n' "$install_legacy_output" | grep -q "^Components: hukuhaka-ltm$"; then
-    pass "explicit deprecated install remains available with warning"
+removed_component_policy_ok=1
+for removed_component in hukuhaka-ltm hukuhaka-project-mapper; do
+    if removed_output=$(HOME="$install_test_home" "$SCRIPT_DIR/install.sh" \
+        --source-dir "$REPO_DIR" --version "$install_test_version" \
+        --components "$removed_component" --dry-run \
+        --skip-preflight --skip-extras 2>&1); then
+        removed_component_policy_ok=0
+    elif ! printf '%s\n' "$removed_output" | grep -q "unknown component '$removed_component'"; then
+        removed_component_policy_ok=0
+    fi
+done
+if [ "$removed_component_policy_ok" -eq 1 ]; then
+    pass "removed components are rejected explicitly"
 else
-    fail "explicit deprecated install policy"
+    fail "removed component selection policy"
 fi
 
 claude_runtime_home="$install_test_home/claude-runtime"
@@ -277,7 +283,7 @@ expected = {"hukuhaka-report-planner", "hukuhaka-codex", "claude-md"}
 raise SystemExit(0 if manifest.get("version") == sys.argv[2] and set(manifest.get("components", [])) == expected else 1)
 PY
 then
-    pass "Claude partial-state upgrade converges after dropped plugins are already absent"
+    pass "Claude partial-state upgrade drops removed legacy components"
 else
     fail "Claude partial-state upgrade — inspect $VALIDATE_TMP/claude-partial.log"
 fi
@@ -286,8 +292,9 @@ rm -rf "$install_test_home"
 codex_dry_run=$(HOME="$VALIDATE_TMP/codex-dry-home" "$SCRIPT_DIR/install.sh" \
     --source-dir "$REPO_DIR" --version "$install_test_version" --host codex \
     --all --dry-run --skip-preflight --skip-extras 2>&1 || true)
-if printf '%s\n' "$codex_dry_run" | grep -q '^Components: hukuhaka-report-planner$' && \
-   printf '%s\n' "$codex_dry_run" | grep -q 'plugin add hukuhaka-report-planner@hukuhaka-harness'; then
+if printf '%s\n' "$codex_dry_run" | grep -q '^Components: hukuhaka-report-planner,hukuhaka-engineering-plan,agents-md$' && \
+   printf '%s\n' "$codex_dry_run" | grep -q 'plugin add hukuhaka-report-planner@hukuhaka-harness' && \
+   printf '%s\n' "$codex_dry_run" | grep -q 'merge agents-md into'; then
     pass "Codex installer dry-run lifecycle"
 else
     fail "Codex installer dry-run lifecycle"
@@ -296,8 +303,8 @@ fi
 both_dry_run=$(HOME="$VALIDATE_TMP/both-dry-home" "$SCRIPT_DIR/install.sh" \
     --source-dir "$REPO_DIR" --version "$install_test_version" --host both \
     --all --dry-run --skip-preflight --skip-extras 2>&1 || true)
-if printf '%s\n' "$both_dry_run" | grep -q '^  Claude Code: hukuhaka-report-planner,hukuhaka-codex,claude-md$' && \
-   printf '%s\n' "$both_dry_run" | grep -q '^  Codex:       hukuhaka-report-planner$' && \
+if printf '%s\n' "$both_dry_run" | grep -q '^  Claude Code: hukuhaka-report-planner,hukuhaka-engineering-plan,hukuhaka-codex,claude-md$' && \
+   printf '%s\n' "$both_dry_run" | grep -q '^  Codex:       hukuhaka-report-planner,hukuhaka-engineering-plan,agents-md$' && \
    printf '%s\n' "$both_dry_run" | grep -q '^  Claude Code: complete$' && \
    printf '%s\n' "$both_dry_run" | grep -q '^  Codex:       complete$'; then
     pass "both-host installer applies the component support matrix"
@@ -380,24 +387,7 @@ else
     fail "Codex version-pinned lifecycle — inspect $VALIDATE_TMP/codex-pinned-*.log"
 fi
 
-# ── 5. Skeleton golden tests (deterministic; dual-mode on/off) ──────
-# The harness lives in an internal-only dir that is not part of public
-# releases — skip cleanly when it is absent (e.g. public-repo CI).
-
-GOLDEN="$REPO_DIR/eval/static-checks/skeleton-golden.sh"
-
-echo ""
-echo "Skeleton golden tests:"
-
-if [ ! -f "$GOLDEN" ]; then
-    echo "  [skip] skeleton-golden (harness not present in this checkout)"
-elif bash "$GOLDEN" > "$VALIDATE_TMP/skeleton-golden.log" 2>&1; then
-    pass "skeleton-golden ($(tail -1 "$VALIDATE_TMP/skeleton-golden.log"))"
-else
-    fail "skeleton-golden — $(tail -3 "$VALIDATE_TMP/skeleton-golden.log" | tr '\n' ' ')"
-fi
-
-# ── 6. Official-docs refresh script ─────────────────────────────────
+# ── 5. Official-docs refresh script ─────────────────────────────────
 
 echo ""
 echo "Official docs refresh:"

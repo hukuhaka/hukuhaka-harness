@@ -154,7 +154,9 @@ def validate(root: Path, catalog: dict) -> int:
         expected = {
             component["name"]
             for component in components
-            if component.get("lifecycle") == "supported" and "codex" in component.get("hosts", {})
+            if component.get("kind") == "plugin"
+            and component.get("lifecycle") == "supported"
+            and "codex" in component.get("hosts", {})
         }
         if exposed != expected:
             errors.append(f"Codex marketplace entries {sorted(exposed)} != catalog {sorted(expected)}")

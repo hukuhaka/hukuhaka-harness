@@ -1,10 +1,12 @@
 {
   "name": "hukuhaka-report-planner",
-  "version": "0.4.0",
-  "description": "Evidence-based visual document planner for reports, memos, decks, dashboards, handbooks, explainers, and similar artifacts. Researches the material, derives reader-focused structure and anchors, and records a validated build contract under .hukuhaka/reports/.",
+  "version": "0.5.0",
+  "description": "Evidence-based visual document planner for reports, memos, decks, dashboards, handbooks, explainers, and similar artifacts. Records a validated build contract, then delegates requested construction to a dedicated designer.",
   "author": {
     "name": "hukuhaka"
   },
+  "repository": "https://github.com/hukuhaka/hukuhaka-harness",
+  "license": "MIT",
   "keywords": [
     "document",
     "report",
@@ -13,5 +15,6 @@
     "anchors",
     "spec",
     "hukuhaka-report-planner"
-  ]
+  ],
+  "skills": "./skills/"
 }

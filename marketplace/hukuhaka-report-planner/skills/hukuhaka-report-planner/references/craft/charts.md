@@ -18,8 +18,19 @@ rendering library or implementation technology.
 - **Distribution or uncertainty:** histogram, box, interval, density, or fan chart.
 - **Relationship:** scatter, connected scatter, bubble, or correlation matrix.
 - **Composition or contribution:** stacked bar, mosaic, treemap, or waterfall.
+- **Stage drop-off:** ordered bars or a funnel when stage area does not imply unsupported
+  volume; label both stage values and drop-off.
 
 Select from the relationship and reading task, not from a desire for variety.
+For distribution, tail, relationship, or grid-valued evidence, also consider `plots.md`.
+
+## Small multiples
+
+- Split competing series or conditions when one frame obscures comparison.
+- Preserve shared axes and scales across panels unless a clearly annotated exception is
+  required by the evidence.
+- Directly label panels and annotate the one that carries the finding; let the rest provide
+  context.
 
 ## Axes
 

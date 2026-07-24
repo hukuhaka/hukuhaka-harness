@@ -78,21 +78,31 @@ for field in "reader question" "reader outcome" "evidence" "anchor"; do
 done
 
 ANCHORS="$(block_text "Anchors")"
-ANCHOR_COUNT="$(printf '%s\n' "$ANCHORS" | grep -Ec '^### A[0-9]+ +[^[:space:]]' || true)"
-if [ "$ANCHOR_COUNT" -eq 0 ]; then
+ANCHOR_IDS="$(printf '%s\n' "$ANCHORS" | sed -n 's/^### \(A[0-9][0-9]*\) .*/\1/p')"
+if [ -z "$ANCHOR_IDS" ]; then
   printf '%s\n' "$ANCHORS" | grep -Eq '^- none: +[^[:space:]]' || fail "Anchors needs an A<number> block or '- none: <reason>'"
 else
-  for field in "reader question" "evidence" "selected form" "takeaway" "caveat"; do
-    count="$(printf '%s\n' "$ANCHORS" | grep -Ec "^- $field:" || true)"
-    [ "$count" -ge "$ANCHOR_COUNT" ] || fail "Anchors needs '$field' for every anchor"
+  for anchor_id in $ANCHOR_IDS; do
+    ANCHOR_BLOCK="$(printf '%s\n' "$ANCHORS" | awk -v id="$anchor_id" '
+      $0 ~ "^### "id" " { inside=1; next }
+      inside && /^### / { exit }
+      inside { print }
+    ')"
+    for field in "reader question" "evidence" "selected form" "takeaway" "caveat"; do
+      printf '%s\n' "$ANCHOR_BLOCK" | grep -Eq "^- $field:" || fail "Anchors $anchor_id missing field: $field"
+    done
   done
 fi
 
-for anchor_id in $(printf '%s\n' "$STRUCTURE" | sed -n 's/^  - anchor: \(A[0-9][0-9]*\)$/\1/p'); do
+UNIT_ANCHOR_IDS="$(printf '%s\n' "$STRUCTURE" | sed -n 's/^  - anchor: \(A[0-9][0-9]*\)$/\1/p' | sort -u)"
+for anchor_id in $UNIT_ANCHOR_IDS; do
   printf '%s\n' "$ANCHORS" | grep -Eq "^### $anchor_id +" || fail "Structure references missing anchor: $anchor_id"
 done
+for anchor_id in $ANCHOR_IDS; do
+  printf '%s\n' "$UNIT_ANCHOR_IDS" | grep -Fxq "$anchor_id" || fail "anchor not referenced by any unit: $anchor_id"
+done
 
-for source_id in $(printf '%s\n' "$STRUCTURE\n$ANCHORS" | grep -Eo 'S[0-9]+' | sort -u); do
+for source_id in $(printf '%s\n%s\n' "$STRUCTURE" "$ANCHORS" | grep -Eo 'S[0-9]+' | sort -u); do
   printf '%s\n' "$SOURCE_IDS" | grep -Fxq "$source_id" || fail "plan references missing source: $source_id"
 done
 
