@@ -14,6 +14,8 @@ plugin version.
 - Fixed the documented zero-argument remote installer on macOS Bash 3.2, where
   an empty argument array under `set -u` stopped installation before the Python
   runtime started.
+- Prevented macOS Bash 3.2 release validation from reporting false failures
+  when successful installer output was matched under `pipefail`.
 
 ### Changed
 

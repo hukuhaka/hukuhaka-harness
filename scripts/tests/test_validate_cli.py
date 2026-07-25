@@ -11,6 +11,12 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ValidateCliTests(unittest.TestCase):
+    def test_validation_probes_do_not_pipe_into_early_exit_consumers(self) -> None:
+        script = (ROOT / "scripts" / "validate.sh").read_text(encoding="utf-8")
+
+        self.assertNotIn("| grep -q", script)
+        self.assertNotIn("| head -1", script)
+
     def test_invalid_arguments_exit_two_without_running_validation(self) -> None:
         result = subprocess.run(
             (str(ROOT / "scripts" / "validate.sh"), "--unknown"),

@@ -97,8 +97,8 @@ validate_frontmatter() {
     fi
 
     local has_name has_desc
-    has_name=$(echo "$frontmatter" | grep -c '^name:' || true)
-    has_desc=$(echo "$frontmatter" | grep -c '^description:' || true)
+    has_name=$(grep -c '^name:' <<<"$frontmatter" || true)
+    has_desc=$(grep -c '^description:' <<<"$frontmatter" || true)
 
     if [ "$has_name" -ge 1 ] && [ "$has_desc" -ge 1 ]; then
         pass "$label"
@@ -190,12 +190,13 @@ claude_test_path="$fake_host_bin:$PATH"
 
 install_all_output=$(HOME="$install_test_home" "$SCRIPT_DIR/install.sh" \
     --source-dir "$REPO_DIR" --version "$install_test_version" --all --dry-run 2>&1 || true)
-install_all_components=$(printf '%s\n' "$install_all_output" | sed -n 's/^Components: //p' | head -1)
+install_all_components=$(awk '/^Components: / {sub(/^Components: /, ""); print; exit}' \
+    <<<"$install_all_output")
 if [ -n "$install_all_components" ] && \
    [[ ",$install_all_components," != *",hukuhaka-ltm,"* ]] && \
    [[ ",$install_all_components," != *",hukuhaka-project-mapper,"* ]] && \
-   printf '%s\n' "$install_all_output" | grep -q '^  Claude Code: complete$' && \
-   ! printf '%s\n' "$install_all_output" | grep -q '^  Codex:'; then
+   grep -q '^  Claude Code: complete$' <<<"$install_all_output" && \
+   ! grep -q '^  Codex:' <<<"$install_all_output"; then
     pass "non-interactive installer defaults to supported Claude components"
 else
     fail "installer non-interactive default/lifecycle policy"
@@ -207,7 +208,7 @@ for removed_component in hukuhaka-ltm hukuhaka-project-mapper; do
         --source-dir "$REPO_DIR" --version "$install_test_version" \
         --components "$removed_component" --dry-run 2>&1); then
         removed_component_policy_ok=0
-    elif ! printf '%s\n' "$removed_output" | grep -q "unknown component '$removed_component'"; then
+    elif ! grep -q "unknown component '$removed_component'" <<<"$removed_output"; then
         removed_component_policy_ok=0
     fi
 done
@@ -285,9 +286,9 @@ rm -rf "$install_test_home"
 codex_dry_run=$(HOME="$VALIDATE_TMP/codex-dry-home" "$SCRIPT_DIR/install.sh" \
     --source-dir "$REPO_DIR" --version "$install_test_version" --host codex \
     --all --dry-run 2>&1 || true)
-if printf '%s\n' "$codex_dry_run" | grep -q '^Components: hukuhaka-report-planner,hukuhaka-engineering-plan,agents-md$' && \
-   printf '%s\n' "$codex_dry_run" | grep -q 'plugin add hukuhaka-report-planner@hukuhaka-harness' && \
-   printf '%s\n' "$codex_dry_run" | grep -q 'merge agents-md into'; then
+if grep -q '^Components: hukuhaka-report-planner,hukuhaka-engineering-plan,agents-md$' <<<"$codex_dry_run" && \
+   grep -q 'plugin add hukuhaka-report-planner@hukuhaka-harness' <<<"$codex_dry_run" && \
+   grep -q 'merge agents-md into' <<<"$codex_dry_run"; then
     pass "Codex installer dry-run lifecycle"
 else
     fail "Codex installer dry-run lifecycle"
@@ -296,10 +297,10 @@ fi
 both_dry_run=$(HOME="$VALIDATE_TMP/both-dry-home" "$SCRIPT_DIR/install.sh" \
     --source-dir "$REPO_DIR" --version "$install_test_version" --host both \
     --all --dry-run 2>&1 || true)
-if printf '%s\n' "$both_dry_run" | grep -q '^  Claude Code: hukuhaka-report-planner,hukuhaka-engineering-plan,hukuhaka-codex,claude-md$' && \
-   printf '%s\n' "$both_dry_run" | grep -q '^  Codex:       hukuhaka-report-planner,hukuhaka-engineering-plan,agents-md$' && \
-   printf '%s\n' "$both_dry_run" | grep -q '^  Claude Code: complete$' && \
-   printf '%s\n' "$both_dry_run" | grep -q '^  Codex:       complete$'; then
+if grep -q '^  Claude Code: hukuhaka-report-planner,hukuhaka-engineering-plan,hukuhaka-codex,claude-md$' <<<"$both_dry_run" && \
+   grep -q '^  Codex:       hukuhaka-report-planner,hukuhaka-engineering-plan,agents-md$' <<<"$both_dry_run" && \
+   grep -q '^  Claude Code: complete$' <<<"$both_dry_run" && \
+   grep -q '^  Codex:       complete$' <<<"$both_dry_run"; then
     pass "both-host installer applies the component support matrix"
 else
     fail "both-host installer plan/results"
@@ -308,7 +309,7 @@ fi
 codex_unsupported=$(HOME="$VALIDATE_TMP/codex-unsupported-home" "$SCRIPT_DIR/install.sh" \
     --source-dir "$REPO_DIR" --version "$install_test_version" --host codex \
     --components hukuhaka-codex --dry-run 2>&1 || true)
-if printf '%s\n' "$codex_unsupported" | grep -q "unknown component 'hukuhaka-codex'"; then
+if grep -q "unknown component 'hukuhaka-codex'" <<<"$codex_unsupported"; then
     pass "installer rejects components unsupported by selected host"
 else
     fail "installer host compatibility rejection"
