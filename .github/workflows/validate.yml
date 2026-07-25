@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches-ignore: [main]
+    branches: ["**"]
 
 concurrency:
   group: validate-${{ github.ref }}
@@ -35,4 +35,4 @@ jobs:
 
       - name: Check version bump on plugin changes
         if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
-        run: scripts/check-plugin-version-bumps.sh "${{ github.event.pull_request.base.sha }}"
+        run: scripts/tests/check-plugin-version-bumps.sh "${{ github.event.pull_request.base.sha }}"

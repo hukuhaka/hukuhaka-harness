@@ -7,7 +7,6 @@ MIN_PYTHON="3.9"
 SOURCE_DIR=""
 REQUESTED_VERSION=""
 VERSION_EXPLICIT=false
-AUTO_INSTALL_DEPS=false
 ARGS=("$@")
 
 for ((i = 0; i < ${#ARGS[@]}; i++)); do
@@ -23,7 +22,6 @@ for ((i = 0; i < ${#ARGS[@]}; i++)); do
             VERSION_EXPLICIT=true
             i=$((i + 1))
             ;;
-        --auto-install-deps) AUTO_INSTALL_DEPS=true ;;
     esac
 done
 
@@ -32,36 +30,13 @@ python_ok() {
         python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1
 }
 
-install_python() {
-    local cmd=()
-    case "$(uname -s)" in
-        Darwin)
-            command -v brew >/dev/null 2>&1 && cmd=(brew install python) ;;
-        Linux)
-            if command -v apt-get >/dev/null 2>&1; then cmd=(sudo apt-get install -y python3)
-            elif command -v dnf >/dev/null 2>&1; then cmd=(sudo dnf install -y python3)
-            elif command -v pacman >/dev/null 2>&1; then cmd=(sudo pacman -S --noconfirm python)
-            elif command -v zypper >/dev/null 2>&1; then cmd=(sudo zypper install -y python3)
-            fi ;;
-    esac
-    if [ "${#cmd[@]}" -eq 0 ]; then
-        return 1
-    fi
-    echo "Installing Python: ${cmd[*]}"
-    "${cmd[@]}"
-}
-
 if ! python_ok; then
-    if $AUTO_INSTALL_DEPS && install_python && python_ok; then
-        :
-    else
-        echo "Error: Python $MIN_PYTHON+ is required as 'python3'." >&2
-        echo "  macOS: brew install python" >&2
-        echo "  Debian/Ubuntu: sudo apt-get install python3" >&2
-        echo "  Fedora/RHEL: sudo dnf install python3" >&2
-        echo "Native Windows and Python 2 are not supported." >&2
-        exit 1
-    fi
+    echo "Error: Python $MIN_PYTHON+ is required as 'python3'." >&2
+    echo "  macOS: brew install python" >&2
+    echo "  Debian/Ubuntu: sudo apt-get install python3" >&2
+    echo "  Fedora/RHEL: sudo dnf install python3" >&2
+    echo "Native Windows and Python 2 are not supported." >&2
+    exit 1
 fi
 
 DOWNLOAD_DIR=""
@@ -78,7 +53,7 @@ SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 if [ -z "$SOURCE_DIR" ] && [ -n "$SCRIPT_PATH" ] && [ -f "$SCRIPT_PATH" ]; then
     LOCAL_REPO="$(cd "$(dirname "$SCRIPT_PATH")/.." 2>/dev/null && pwd -P || true)"
     if [ -n "$LOCAL_REPO" ] && [ -f "$LOCAL_REPO/components.json" ] && \
-       [ -f "$LOCAL_REPO/scripts/harness_installer/install.py" ]; then
+       [ -f "$LOCAL_REPO/scripts/install/main.py" ]; then
         SOURCE_DIR="$LOCAL_REPO"
     fi
 fi
@@ -144,7 +119,7 @@ PY
     LOCAL_SOURCE=false
 fi
 
-for required in components.json VERSION scripts/harness_installer/install.py scripts/deploy.sh; do
+for required in components.json VERSION scripts/install/main.py; do
     [ -f "$SOURCE_DIR/$required" ] || {
         echo "Error: incomplete hukuhaka-harness source (missing $required)." >&2
         exit 1
@@ -162,4 +137,4 @@ export PYTHONDONTWRITEBYTECODE=1
 RUNTIME_ARGS=(--repo-root "$SOURCE_DIR" --resolved-version "$RESOLVED_VERSION")
 $VERSION_EXPLICIT && RUNTIME_ARGS+=(--version-explicit)
 $LOCAL_SOURCE && RUNTIME_ARGS+=(--local-source)
-python3 -m scripts.harness_installer.install "${RUNTIME_ARGS[@]}" "${ARGS[@]}"
+python3 -m scripts.install.main "${RUNTIME_ARGS[@]}" "${ARGS[@]}"

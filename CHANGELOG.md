@@ -7,6 +7,33 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.0] — 2026-07-25
+
+### Added
+
+- Added a host-aware terminal installer that shows Claude Code and Codex as
+  separate sections and lets each host reset managed plugins and skills before
+  installation. Template reset remains an explicit separate choice through
+  `--reset-templates`; unrelated host configuration and Codex memory are
+  preserved.
+
+### Changed
+
+- Reorganized installation into a five-file Python standard-library runtime and
+  consolidated pre-push, validation, and public release workflows behind their
+  stable top-level entrypoints. Existing component selection, idempotent
+  reinstall, uninstall, transactional rollback, managed-file drift protection,
+  and non-interactive Claude defaults remain covered.
+- Interactive remote installation now uses `bash -c "$(curl ...)"` so standard
+  input remains attached to the terminal selector. Piped installation remains
+  available for explicit non-interactive flags.
+
+### Removed
+
+- Removed installer-owned Codex preference editing, third-party extras,
+  dependency automation, and their advanced CLI flags. Installation and reset
+  now own only declared plugins, skills, and instruction templates.
+
 ## [1.0.13] — 2026-07-24
 
 ### Added

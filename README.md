@@ -20,14 +20,12 @@ imply that a Claude Code plugin is portable to Codex.
 | **CLAUDE.md template** | — | Supported | Claude Code only | Shared scoped-change and verification policy with Claude-specific `spec.md` sign-off and attribution-free commits, deployed to `~/.claude/CLAUDE.md`. |
 | **AGENTS.md template** | — | Supported | Codex only | Codex policy for scoped change previews, evidence-backed verification, compact-resilient task state, and a safe local Git lifecycle, merged into `$CODEX_HOME/AGENTS.md`. |
 
-Optional third-party extras (rtk, ccstatusline, agent-teams flag) ride along with the installer.
-
 ## Install
 
 The public installer supports Claude Code, Codex, or both. The default
-interactive flow asks for the target host before component selection. Explicit
-non-interactive operations that omit `--host` still target Claude Code for
-backward compatibility.
+interactive flow shows Claude Code and Codex as separate terminal sections.
+Explicit non-interactive operations that omit `--host` still target Claude
+Code for backward compatibility.
 
 ### Requirements and support
 
@@ -36,18 +34,16 @@ backward compatibility.
 | Operating system | macOS or Linux |
 | Python | Python 3.9+ available as `python3`; Python 2 is unsupported |
 | Bootstrap | `bash` and `curl` for remote installation |
+| Claude Code host | `claude` CLI |
 | Codex host | `codex` CLI |
 | Windows | Native Windows is unsupported; WSL is not yet part of the tested matrix |
 
 The installer uses only the Python standard library. If `python3` is missing,
-the bootstrap prints the appropriate package-manager command; it executes that
-command only when `--auto-install-deps` is explicitly supplied.
+the bootstrap prints the appropriate package-manager command.
 
 Claude Code deployment is transactional: registry JSON is validated before
 files change, writes are atomic, interrupted runs are recovered on the next
 install, and locally modified managed files require an explicit `--force`.
-Optional extras are kept outside the core manifest and are never removed by a
-core uninstall.
 
 The Claude and Codex instruction templates are separate sources. Both
 distinguish analysis from mutation authority, preserve pre-existing work, and
@@ -60,23 +56,27 @@ only the managed block on uninstall. `CODEX_HOME` defaults to `~/.codex`.
 ### Interactive install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh | bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh)"
 ```
 
-The installer is interactive by default (host selector → component selector → dependency preflight → optional host configuration). Choose Claude Code, Codex, or both. Existing selections are preserved on re-run when the component is still distributed.
+The installer uses an arrow-key terminal selector on standard input/output:
+Up/Down moves, Space selects, and Enter applies. It detects the `claude` and
+`codex` CLIs, shows each available host separately, and disables a host whose
+CLI is missing. Each host section selects its own components and can reset
+managed plugins and skills before installing. The reset can optionally include
+the managed `CLAUDE.md` or `AGENTS.md` template. Codex memory, `config.toml`,
+and Claude settings unrelated to the harness are never reset. The final choices
+are `Install / Exit`.
+
+The interactive command uses `bash -c` so stdin remains attached to the
+terminal. `curl ... | bash` remains supported for explicit non-interactive
+flags, but cannot accept arrow-key input because the script itself occupies
+stdin.
 
 Without a TTY and without explicit selection flags, the installer keeps the
 current components and adds supported defaults for the selected host. The
 non-interactive default host remains Claude Code. Use `--add` for an incremental
 addition or `--components` to declare the complete desired component set.
-
-When an interactive install includes Codex, the installer can configure
-recommended user-level defaults in `~/.codex/config.toml`. The English wizard
-asks about reasoning defaults, concurrent agents, CLI status and notifications,
-sleep prevention, and web-search mode. It preserves unknown keys, keeps
-conflicting values by default, shows a unified diff, asks for final approval,
-backs up an existing file as `config.toml.hukuhaka-backup`, and validates the
-result with the installed Codex CLI before writing.
 
 ### Claude Code
 
@@ -86,6 +86,7 @@ Non-interactive variants retain Claude Code as the default host:
 curl -fsSL .../install.sh | bash -s -- --all
 curl -fsSL .../install.sh | bash -s -- --components hukuhaka-report-planner,hukuhaka-engineering-plan,hukuhaka-codex,claude-md
 curl -fsSL .../install.sh | bash -s -- --uninstall
+curl -fsSL .../install.sh | bash -s -- --all --reset-before-install
 ```
 
 ### Codex
@@ -98,16 +99,10 @@ curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scri
   | bash -s -- --host codex --all
 ```
 
-Explicit installs remain non-interactive unless configuration is requested.
-`--configure-codex` requires a TTY:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh \
-  | bash -s -- --host codex --all --configure-codex
-```
-
-These preferences are user-owned and remain in place if harness plugins are
-later removed.
+For scripted clean reinstalls, use `--reset-before-install`. Add
+`--reset-templates` only when the installer-managed instruction template should
+also be replaced. Modified managed files stop the reset unless `--force` is
+explicitly supplied.
 
 The equivalent native Codex commands are:
 

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 PLANNER = ROOT / "marketplace" / "hukuhaka-report-planner"
 CATALOG = ROOT / "components.json"
 CLAUDE_MANIFEST = PLANNER / ".claude-plugin" / "plugin.json"
@@ -77,7 +77,12 @@ def main() -> int:
     require("agents" not in codex, "Codex manifest must not claim unsupported packaged agents", errors)
 
     catalog_check = subprocess.run(
-        [sys.executable, str(ROOT / "scripts/component_catalog.py"), "--root", str(ROOT), "validate"],
+        [
+            sys.executable,
+            str(ROOT / "scripts/tests/check-component-catalog.py"),
+            "--root",
+            str(ROOT),
+        ],
         capture_output=True,
         text=True,
     )

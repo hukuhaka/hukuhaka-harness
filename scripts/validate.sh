@@ -3,12 +3,11 @@
 # Validation Script — run locally or from CI
 #
 # Checks:
-#   1. JSON syntax (catalog, Claude/Codex manifests, specs, scenarios)
+#   1. JSON syntax (catalog, Claude/Codex manifests, eval cases)
 #   2. SKILL.md frontmatter (name, description required)
-#   3. Claude deploy dry-run
-#   4. Component catalog and Claude/Codex installer lifecycle
-#   5. Private static/runtime harnesses when present
-#   6. Exact public staging through release-public.sh when present
+#   3. Component catalog and Claude/Codex installer lifecycle
+#   4. Private static/runtime harnesses when present
+#   5. Exact public tree construction through release.sh when present
 #
 # Usage:
 #   scripts/validate.sh
@@ -17,6 +16,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$REPO_DIR"
 
 ERRORS=0
 CHECKS=0
@@ -59,13 +59,8 @@ done
     validate_json "$REPO_DIR/.agents/plugins/marketplace.json"
 [ -f "$REPO_DIR/components.json" ] && validate_json "$REPO_DIR/components.json"
 
-# eval specs
-for f in "$REPO_DIR"/eval/specs/*.json; do
-    [ -f "$f" ] && validate_json "$f"
-done
-
-# eval scenarios
-for f in "$REPO_DIR"/eval/scenarios/*.json; do
+# eval v2 cases
+for f in "$REPO_DIR"/eval/cases/*/case.json; do
     [ -f "$f" ] && validate_json "$f"
 done
 
@@ -111,18 +106,9 @@ for f in "$REPO_DIR"/skills/*/SKILL.md; do
     [ -f "$f" ] && validate_frontmatter "$f"
 done
 
-# ── 3. Deploy Dry Run ───────────────────────────────────────────────
+install_test_version=$(tr -d '[:space:]' < "$REPO_DIR/VERSION")
 
-echo ""
-echo "Deploy dry run:"
-
-if "$SCRIPT_DIR/deploy.sh" --dry-run > /dev/null 2>&1; then
-    pass "deploy.sh --dry-run"
-else
-    fail "deploy.sh --dry-run failed"
-fi
-
-# ── 4. Host support and installer lifecycle ─────────────────────────
+# ── 3. Host support and installer lifecycle ─────────────────────────
 
 echo ""
 echo "Host support:"
@@ -134,75 +120,62 @@ else
     fail "installer unit tests — $(tail -8 "$VALIDATE_TMP/installer-tests.log" | tr '\n' ' ')"
 fi
 
-extras_home="$VALIDATE_TMP/extras-home"
-mkdir -p "$extras_home/.claude"
-printf '#!/bin/sh\n' > "$extras_home/.claude/statusline.sh"
-printf '{"statusLine":{"command":"%s/.claude/statusline.sh"}}\n' "$extras_home" \
-    > "$extras_home/.claude/settings.json"
-extras_before=$(python3 - "$extras_home/.claude" <<'PY'
-import hashlib, pathlib, sys
-root = pathlib.Path(sys.argv[1])
-for name in ("settings.json", "statusline.sh"):
-    print(hashlib.sha256((root / name).read_bytes()).hexdigest())
-PY
-)
-if HOME="$extras_home" "$SCRIPT_DIR/install_helper.sh" --none --dry-run \
-       > "$VALIDATE_TMP/extras-dry-run.log" 2>&1 && \
-   [ -f "$extras_home/.claude/statusline.sh" ] && \
-   [ "$extras_before" = "$(python3 - "$extras_home/.claude" <<'PY'
-import hashlib, pathlib, sys
-root = pathlib.Path(sys.argv[1])
-for name in ("settings.json", "statusline.sh"):
-    print(hashlib.sha256((root / name).read_bytes()).hexdigest())
-PY
-)" ]; then
-    pass "extras dry-run preserves legacy files and settings"
+if [ ! -d "$SCRIPT_DIR/prepush/tests" ]; then
+    echo "  [skip] private pre-push workflow tests"
+elif PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+    -s "$SCRIPT_DIR/prepush/tests" -p 'test_*.py' \
+    > "$VALIDATE_TMP/prepush-tests.log" 2>&1; then
+    pass "pre-push ref ranges"
 else
-    fail "extras dry-run mutated state — inspect $VALIDATE_TMP/extras-dry-run.log"
+    fail "pre-push workflow tests — $(tail -8 "$VALIDATE_TMP/prepush-tests.log" | tr '\n' ' ')"
 fi
 
-printf '{broken' > "$extras_home/.claude/settings.json"
-if ! HOME="$extras_home" "$SCRIPT_DIR/install_helper.sh" --none \
-       > "$VALIDATE_TMP/extras-invalid-json.log" 2>&1 && \
-   [ -f "$extras_home/.claude/statusline.sh" ]; then
-    pass "extras rejects malformed settings before mutation"
+if [ ! -d "$SCRIPT_DIR/release/tests" ]; then
+    echo "  [skip] private release workflow tests"
+elif PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+    -s "$SCRIPT_DIR/release/tests" -p 'test_*.py' \
+    > "$VALIDATE_TMP/release-tests.log" 2>&1; then
+    pass "release build safety + exact-tag public publish"
 else
-    fail "extras malformed-settings guard — inspect $VALIDATE_TMP/extras-invalid-json.log"
+    fail "release workflow tests — $(tail -8 "$VALIDATE_TMP/release-tests.log" | tr '\n' ' ')"
 fi
 
-if python3 "$SCRIPT_DIR/component_catalog.py" validate > "$VALIDATE_TMP/component-catalog.log" 2>&1; then
+if [ ! -f "$REPO_DIR/eval/run.py" ]; then
+    echo "  [skip] eval v2 runner tests (private harness not present in this checkout)"
+elif PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+    -s "$REPO_DIR/eval/tests" -p 'test_*.py' > "$VALIDATE_TMP/eval-v2-tests.log" 2>&1; then
+    pass "eval v2 transcript normalization and evidence contracts"
+else
+    fail "eval v2 runner tests — $(tail -8 "$VALIDATE_TMP/eval-v2-tests.log" | tr '\n' ' ')"
+fi
+
+if python3 "$SCRIPT_DIR/tests/check-component-catalog.py" > "$VALIDATE_TMP/component-catalog.log" 2>&1; then
     pass "component catalog"
 else
     fail "component catalog — $(tail -3 "$VALIDATE_TMP/component-catalog.log" | tr '\n' ' ')"
 fi
 
-if python3 "$SCRIPT_DIR/check-host-support.py" > "$VALIDATE_TMP/host-support.log" 2>&1; then
+if python3 "$SCRIPT_DIR/tests/check-host-support.py" > "$VALIDATE_TMP/host-support.log" 2>&1; then
     pass "report-planner Claude/Codex contract"
 else
     fail "host support — $(tail -3 "$VALIDATE_TMP/host-support.log" | tr '\n' ' ')"
 fi
 
-bash "$SCRIPT_DIR/preflight.sh" --host claude --components hukuhaka-report-planner \
-    --src-dir "$REPO_DIR" > "$VALIDATE_TMP/preflight-claude.json" 2>/dev/null || true
-bash "$SCRIPT_DIR/preflight.sh" --host codex --components hukuhaka-report-planner \
-    --src-dir "$REPO_DIR" > "$VALIDATE_TMP/preflight-codex.json" 2>/dev/null || true
-if python3 - "$VALIDATE_TMP/preflight-claude.json" "$VALIDATE_TMP/preflight-codex.json" <<'PY'
-import json, sys
-claude = {item["name"] for item in json.load(open(sys.argv[1]))["requirements"]}
-codex = {item["name"] for item in json.load(open(sys.argv[2]))["requirements"]}
-raise SystemExit(0 if "codex" not in claude and "codex" in codex else 1)
-PY
-then
-    pass "host-aware dependency preflight"
-else
-    fail "host-aware dependency preflight"
-fi
-
 install_test_home=$(mktemp -d)
-install_test_version=$(tr -d '[:space:]' < "$REPO_DIR/VERSION")
+fake_host_bin="$install_test_home/host-bin"
+mkdir -p "$fake_host_bin"
+cat > "$fake_host_bin/claude" <<'SH'
+#!/usr/bin/env bash
+if [ "${1:-}" = "--version" ]; then
+    echo "claude test double"
+fi
+exit 0
+SH
+chmod +x "$fake_host_bin/claude"
+claude_test_path="$fake_host_bin:$PATH"
+
 install_all_output=$(HOME="$install_test_home" "$SCRIPT_DIR/install.sh" \
-    --source-dir "$REPO_DIR" --version "$install_test_version" --all --dry-run \
-    --skip-preflight --skip-extras 2>&1 || true)
+    --source-dir "$REPO_DIR" --version "$install_test_version" --all --dry-run 2>&1 || true)
 install_all_components=$(printf '%s\n' "$install_all_output" | sed -n 's/^Components: //p' | head -1)
 if [ -n "$install_all_components" ] && \
    [[ ",$install_all_components," != *",hukuhaka-ltm,"* ]] && \
@@ -218,8 +191,7 @@ removed_component_policy_ok=1
 for removed_component in hukuhaka-ltm hukuhaka-project-mapper; do
     if removed_output=$(HOME="$install_test_home" "$SCRIPT_DIR/install.sh" \
         --source-dir "$REPO_DIR" --version "$install_test_version" \
-        --components "$removed_component" --dry-run \
-        --skip-preflight --skip-extras 2>&1); then
+        --components "$removed_component" --dry-run 2>&1); then
         removed_component_policy_ok=0
     elif ! printf '%s\n' "$removed_output" | grep -q "unknown component '$removed_component'"; then
         removed_component_policy_ok=0
@@ -234,14 +206,18 @@ fi
 claude_runtime_home="$install_test_home/claude-runtime"
 mkdir -p "$claude_runtime_home"
 claude_install_args=(--source-dir "$REPO_DIR" --version "$install_test_version" --host claude \
-    --all --skip-preflight --skip-extras)
-if HOME="$claude_runtime_home" "$SCRIPT_DIR/install.sh" "${claude_install_args[@]}" \
+    --all)
+if PATH="$claude_test_path" HOME="$claude_runtime_home" \
+       "$SCRIPT_DIR/install.sh" "${claude_install_args[@]}" \
        > "$VALIDATE_TMP/claude-install-1.log" 2>&1 && \
-   HOME="$claude_runtime_home" "$SCRIPT_DIR/install.sh" "${claude_install_args[@]}" \
+   PATH="$claude_test_path" HOME="$claude_runtime_home" \
+       "$SCRIPT_DIR/install.sh" "${claude_install_args[@]}" \
        > "$VALIDATE_TMP/claude-install-2.log" 2>&1 && \
-   HOME="$claude_runtime_home" "$SCRIPT_DIR/install.sh" --host claude --uninstall \
+   PATH="$claude_test_path" HOME="$claude_runtime_home" \
+       "$SCRIPT_DIR/install.sh" --host claude --uninstall \
        > "$VALIDATE_TMP/claude-remove-1.log" 2>&1 && \
-   HOME="$claude_runtime_home" "$SCRIPT_DIR/install.sh" --host claude --uninstall \
+   PATH="$claude_test_path" HOME="$claude_runtime_home" \
+       "$SCRIPT_DIR/install.sh" --host claude --uninstall \
        > "$VALIDATE_TMP/claude-remove-2.log" 2>&1; then
     pass "Claude native install/reinstall/uninstall lifecycle"
 else
@@ -251,10 +227,12 @@ fi
 claude_minimal_home="$install_test_home/claude-minimal"
 mkdir -p "$claude_minimal_home"
 claude_minimal_args=(--source-dir "$REPO_DIR" --version "$install_test_version" --host claude \
-    --components claude-md --skip-preflight --skip-extras)
-if HOME="$claude_minimal_home" "$SCRIPT_DIR/install.sh" "${claude_minimal_args[@]}" \
+    --components claude-md)
+if PATH="$claude_test_path" HOME="$claude_minimal_home" \
+       "$SCRIPT_DIR/install.sh" "${claude_minimal_args[@]}" \
        > "$VALIDATE_TMP/claude-minimal-1.log" 2>&1 && \
-   HOME="$claude_minimal_home" "$SCRIPT_DIR/install.sh" "${claude_minimal_args[@]}" \
+   PATH="$claude_test_path" HOME="$claude_minimal_home" \
+       "$SCRIPT_DIR/install.sh" "${claude_minimal_args[@]}" \
        > "$VALIDATE_TMP/claude-minimal-2.log" 2>&1 && \
    grep -q '^  Claude Code: complete$' "$VALIDATE_TMP/claude-minimal-2.log" && \
    ! grep -q 'unbound variable' "$VALIDATE_TMP/claude-minimal-2.log"; then
@@ -273,8 +251,9 @@ cat > "$claude_partial_home/.claude/.hukuhaka-manifest.json" <<'JSON'
 }
 JSON
 claude_partial_args=(--source-dir "$REPO_DIR" --version "$install_test_version" --host claude
-    --components hukuhaka-report-planner,hukuhaka-codex,claude-md --skip-preflight --skip-extras)
-if HOME="$claude_partial_home" "$SCRIPT_DIR/install.sh" "${claude_partial_args[@]}" \
+    --components hukuhaka-report-planner,hukuhaka-codex,claude-md)
+if PATH="$claude_test_path" HOME="$claude_partial_home" \
+       "$SCRIPT_DIR/install.sh" "${claude_partial_args[@]}" \
        > "$VALIDATE_TMP/claude-partial.log" 2>&1 && \
    python3 - "$claude_partial_home/.claude/.hukuhaka-manifest.json" "$install_test_version" <<'PY'
 import json, sys
@@ -291,7 +270,7 @@ rm -rf "$install_test_home"
 
 codex_dry_run=$(HOME="$VALIDATE_TMP/codex-dry-home" "$SCRIPT_DIR/install.sh" \
     --source-dir "$REPO_DIR" --version "$install_test_version" --host codex \
-    --all --dry-run --skip-preflight --skip-extras 2>&1 || true)
+    --all --dry-run 2>&1 || true)
 if printf '%s\n' "$codex_dry_run" | grep -q '^Components: hukuhaka-report-planner,hukuhaka-engineering-plan,agents-md$' && \
    printf '%s\n' "$codex_dry_run" | grep -q 'plugin add hukuhaka-report-planner@hukuhaka-harness' && \
    printf '%s\n' "$codex_dry_run" | grep -q 'merge agents-md into'; then
@@ -302,7 +281,7 @@ fi
 
 both_dry_run=$(HOME="$VALIDATE_TMP/both-dry-home" "$SCRIPT_DIR/install.sh" \
     --source-dir "$REPO_DIR" --version "$install_test_version" --host both \
-    --all --dry-run --skip-preflight --skip-extras 2>&1 || true)
+    --all --dry-run 2>&1 || true)
 if printf '%s\n' "$both_dry_run" | grep -q '^  Claude Code: hukuhaka-report-planner,hukuhaka-engineering-plan,hukuhaka-codex,claude-md$' && \
    printf '%s\n' "$both_dry_run" | grep -q '^  Codex:       hukuhaka-report-planner,hukuhaka-engineering-plan,agents-md$' && \
    printf '%s\n' "$both_dry_run" | grep -q '^  Claude Code: complete$' && \
@@ -314,7 +293,7 @@ fi
 
 codex_unsupported=$(HOME="$VALIDATE_TMP/codex-unsupported-home" "$SCRIPT_DIR/install.sh" \
     --source-dir "$REPO_DIR" --version "$install_test_version" --host codex \
-    --components hukuhaka-codex --dry-run --skip-preflight --skip-extras 2>&1 || true)
+    --components hukuhaka-codex --dry-run 2>&1 || true)
 if printf '%s\n' "$codex_unsupported" | grep -q "unknown component 'hukuhaka-codex'"; then
     pass "installer rejects components unsupported by selected host"
 else
@@ -325,7 +304,7 @@ if command -v codex >/dev/null 2>&1; then
     codex_runtime_root="$VALIDATE_TMP/codex-runtime"
     mkdir -p "$codex_runtime_root/home" "$codex_runtime_root/codex"
     codex_install_args=(--source-dir "$REPO_DIR" --version "$install_test_version" --host codex \
-        --all --skip-preflight --skip-extras)
+        --all)
     if HOME="$codex_runtime_root/home" CODEX_HOME="$codex_runtime_root/codex" \
        "$SCRIPT_DIR/install.sh" "${codex_install_args[@]}" > "$VALIDATE_TMP/codex-install-1.log" 2>&1 && \
        HOME="$codex_runtime_root/home" CODEX_HOME="$codex_runtime_root/codex" \
@@ -346,11 +325,6 @@ fake_codex_root="$VALIDATE_TMP/fake-codex-marketplace"
 fake_codex_bin="$VALIDATE_TMP/fake-codex-bin"
 fake_codex_state="$VALIDATE_TMP/fake-codex-state"
 mkdir -p "$fake_codex_root" "$fake_codex_bin" "$fake_codex_state"
-git -C "$fake_codex_root" init -q
-git -C "$fake_codex_root" config user.name validate
-git -C "$fake_codex_root" config user.email validate@example.com
-git -C "$fake_codex_root" commit --allow-empty -q -m fixture
-git -C "$fake_codex_root" tag "v$install_test_version"
 cat > "$fake_codex_bin/codex" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -363,7 +337,7 @@ if [[ "${1:-}" == "plugin" && "${2:-}" == "marketplace" && "${3:-}" == "add" ]];
         printf '{"alreadyAdded":false}\n'
     fi
 elif [[ "${1:-}" == "plugin" && "${2:-}" == "marketplace" && "${3:-}" == "list" ]]; then
-    printf '{"marketplaces":[{"name":"hukuhaka-harness","root":"%s","marketplaceSource":{"sourceType":"github","source":"hukuhaka/hukuhaka-harness"}}]}\n' "$FAKE_CODEX_ROOT"
+    printf '{"marketplaces":[{"name":"hukuhaka-harness","root":"%s","marketplaceSource":{"sourceType":"local","source":"%s"}}]}\n' "$FAKE_CODEX_ROOT" "$FAKE_SOURCE_ROOT"
 elif [[ "${1:-}" == "plugin" && "${2:-}" == "marketplace" && "${3:-}" == "upgrade" ]]; then
     printf '{}\n'
 elif [[ "${1:-}" == "plugin" && "${2:-}" == "add" ]]; then
@@ -374,35 +348,37 @@ else
 fi
 SH
 chmod +x "$fake_codex_bin/codex"
-codex_pinned_args=(--components hukuhaka-report-planner --version "$install_test_version" --version-explicit)
-if PATH="$fake_codex_bin:$PATH" FAKE_CODEX_ROOT="$fake_codex_root" FAKE_CODEX_STATE="$fake_codex_state" \
-       "$SCRIPT_DIR/hosts/codex.sh" "${codex_pinned_args[@]}" > "$VALIDATE_TMP/codex-pinned-1.log" 2>&1 && \
-   PATH="$fake_codex_bin:$PATH" FAKE_CODEX_ROOT="$fake_codex_root" FAKE_CODEX_STATE="$fake_codex_state" \
-       "$SCRIPT_DIR/hosts/codex.sh" "${codex_pinned_args[@]}" > "$VALIDATE_TMP/codex-pinned-2.log" 2>&1 && \
-   ! PATH="$fake_codex_bin:$PATH" FAKE_CODEX_ROOT="$fake_codex_root" FAKE_CODEX_STATE="$fake_codex_state" \
-       "$SCRIPT_DIR/hosts/codex.sh" --components hukuhaka-report-planner \
-       --version 9.9.9 --version-explicit > "$VALIDATE_TMP/codex-pinned-mismatch.log" 2>&1; then
-    pass "Codex version-pinned reinstall and mismatch rejection"
+codex_pinned_args=(--source-dir "$REPO_DIR" --host codex --components hukuhaka-report-planner \
+    --version "$install_test_version")
+if PATH="$fake_codex_bin:$PATH" FAKE_CODEX_ROOT="$fake_codex_root" FAKE_SOURCE_ROOT="$REPO_DIR" FAKE_CODEX_STATE="$fake_codex_state" \
+       "$SCRIPT_DIR/install.sh" "${codex_pinned_args[@]}" > "$VALIDATE_TMP/codex-pinned-1.log" 2>&1 && \
+   PATH="$fake_codex_bin:$PATH" FAKE_CODEX_ROOT="$fake_codex_root" FAKE_SOURCE_ROOT="$REPO_DIR" FAKE_CODEX_STATE="$fake_codex_state" \
+       "$SCRIPT_DIR/install.sh" "${codex_pinned_args[@]}" > "$VALIDATE_TMP/codex-pinned-2.log" 2>&1 && \
+   ! PATH="$fake_codex_bin:$PATH" FAKE_CODEX_ROOT="$fake_codex_root" FAKE_SOURCE_ROOT="$REPO_DIR" FAKE_CODEX_STATE="$fake_codex_state" \
+       "$SCRIPT_DIR/install.sh" --source-dir "$REPO_DIR" --host codex \
+       --components hukuhaka-report-planner --version 9.9.9 \
+       > "$VALIDATE_TMP/codex-pinned-mismatch.log" 2>&1; then
+    pass "Codex local-source reinstall and version mismatch rejection"
 else
-    fail "Codex version-pinned lifecycle — inspect $VALIDATE_TMP/codex-pinned-*.log"
+    fail "Codex local-source lifecycle — inspect $VALIDATE_TMP/codex-pinned-*.log"
 fi
 
-# ── 5. Official-docs refresh script ─────────────────────────────────
+# ── 4. Official-docs refresh script ─────────────────────────────────
 
 echo ""
 echo "Official docs refresh:"
 
-if [ ! -f "$SCRIPT_DIR/refresh-officials.sh" ]; then
+if [ ! -f "$SCRIPT_DIR/maintenance/refresh-officials.sh" ]; then
     echo "  [skip] refresh-officials.sh (private maintainer script)"
-elif bash -n "$SCRIPT_DIR/refresh-officials.sh" && "$SCRIPT_DIR/refresh-officials.sh" --help > /dev/null; then
+elif bash -n "$SCRIPT_DIR/maintenance/refresh-officials.sh" && "$SCRIPT_DIR/maintenance/refresh-officials.sh" --help > /dev/null; then
     pass "refresh-officials.sh syntax + help"
 else
     fail "refresh-officials.sh syntax + help"
 fi
 
-# ── 7. Report-planner contract tests ───────────────────────────────
+# ── 5. Report-planner contract tests ───────────────────────────────
 
-REPORT_PLANNER_TEST="$REPO_DIR/eval/static-checks/hukuhaka-report-planner.test.mjs"
+REPORT_PLANNER_TEST="$REPO_DIR/scripts/tests/contracts/hukuhaka-report-planner.test.mjs"
 
 echo ""
 echo "Report planner contract:"
@@ -415,12 +391,12 @@ else
     fail "report-planner static tests — $(tail -3 "$VALIDATE_TMP/report-planner-test.log" | tr '\n' ' ')"
 fi
 
-# ── 8. Codex runtime tests ──────────────────────────────────────────
+# ── 6. Codex runtime tests ──────────────────────────────────────────
 
 CODEX_TESTS=(
-    "$REPO_DIR/eval/static-checks/hukuhaka-codex-broker.test.mjs"
-    "$REPO_DIR/eval/static-checks/hukuhaka-codex-prompting.test.mjs"
-    "$REPO_DIR/eval/static-checks/hukuhaka-codex-transfer.test.mjs"
+    "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-broker.test.mjs"
+    "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-prompting.test.mjs"
+    "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-transfer.test.mjs"
 )
 
 echo ""
@@ -447,18 +423,19 @@ else
     fail "Codex runtime tests — $(tail -3 "$VALIDATE_TMP/codex-runtime-test.log" | tr '\n' ' ')"
 fi
 
-# ── 9. Exact public staging ─────────────────────────────────────────
+# ── 7. Exact public tree ─────────────────────────────────────────────
 
 echo ""
-echo "Public release staging:"
+echo "Public release tree:"
 
-if [ ! -x "$SCRIPT_DIR/release-public.sh" ]; then
-    echo "  [skip] public staging (private release script not present)"
-elif "$SCRIPT_DIR/release-public.sh" --stage-only "$VALIDATE_TMP/public-stage" \
+if [ ! -x "$SCRIPT_DIR/release.sh" ]; then
+    echo "  [skip] public tree build (private release tool not present)"
+elif PYTHONDONTWRITEBYTECODE=1 python3 -m scripts.release.stage \
+       --destination "$VALIDATE_TMP/public-stage" \
         > "$VALIDATE_TMP/public-stage.log" 2>&1; then
-    pass "release-public.sh stage-only + staged validation"
+    pass "release.sh worktree build + public validation"
 else
-    fail "public staging — $(tail -5 "$VALIDATE_TMP/public-stage.log" | tr '\n' ' ')"
+    fail "public tree — $(tail -8 "$VALIDATE_TMP/public-stage.log" | tr '\n' ' ')"
 fi
 
 # ── Summary ──────────────────────────────────────────────────────────

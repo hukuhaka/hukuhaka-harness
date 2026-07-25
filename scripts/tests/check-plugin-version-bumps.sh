@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Require every changed marketplace plugin to bump its native manifest version.
+# Validate that every changed marketplace plugin bumps its native manifest version.
 set -euo pipefail
 
 BASE="${1:?usage: check-plugin-version-bumps.sh <base-ref>}"

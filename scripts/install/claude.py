@@ -1,28 +1,26 @@
-"""Transactional Claude Code deployment adapter."""
+"""Transactional Claude Code install adapter."""
 
 from __future__ import annotations
 
-import argparse
 import filecmp
 import json
-import os
-import shutil
-import sys
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
-from .errors import DriftError, InstallerError, StateError
-from .filesystem import (
+from .common import (
+    DriftError,
     FileTransaction,
+    InstallerError,
     InstallerLock,
+    Manifest,
+    StateError,
     load_json,
-    prune_empty_parents,
     remove_path,
     sha256_file,
 )
-from .state import Manifest
 
 
 @dataclass(frozen=True)
@@ -497,6 +495,119 @@ class ClaudeDeployment:
             print("")
             print("Deploy complete. v{}".format(self.version))
 
+    def reset_for_install(self, *, reset_template: bool = False) -> None:
+        """Remove installer-owned plugins/skills before a clean reinstall."""
+        if not self.manifest_path.exists():
+            print("Claude Code: no managed installation to reset.")
+            return
+        lock = nullcontext() if self.dry_run else InstallerLock(self.claude_dir)
+        with lock:
+            if not self.dry_run:
+                FileTransaction.recover_pending(self.claude_dir)
+            manifest = Manifest.load(self.manifest_path)
+            remove_files = {
+                relative
+                for relative in manifest.files
+                if relative.startswith("plugins/{}/".format(self.marketplace_name))
+                or relative.startswith("skills/")
+                or relative == self.marketplace_manifest_rel
+                or (reset_template and relative == "CLAUDE.md")
+            }
+            if not self.force:
+                changed = []
+                for relative in sorted(remove_files):
+                    target = self.claude_dir / relative
+                    recorded = manifest.hashes.get(relative)
+                    if recorded and target.is_file() and sha256_file(target) != recorded:
+                        changed.append(relative)
+                if changed:
+                    raise DriftError(
+                        "managed files were modified: {}. Re-run with --force to reset them".format(
+                            ", ".join(changed)
+                        ),
+                        host="claude",
+                        stage="reset",
+                        operation="check-managed-file-drift",
+                        path=str(self.claude_dir),
+                    )
+
+            settings, installed, known = self._load_registries()
+            suffix = "@{}".format(self.marketplace_name)
+            enabled = settings.get("enabledPlugins", {})
+            if isinstance(enabled, dict):
+                for key in list(enabled):
+                    if key.endswith(suffix):
+                        del enabled[key]
+                if not enabled:
+                    settings.pop("enabledPlugins", None)
+            marketplaces = settings.get("extraKnownMarketplaces", {})
+            if isinstance(marketplaces, dict):
+                marketplaces.pop(self.marketplace_name, None)
+                if not marketplaces:
+                    settings.pop("extraKnownMarketplaces", None)
+            plugins = installed.get("plugins", {})
+            if isinstance(plugins, dict):
+                for key in list(plugins):
+                    if key.endswith(suffix):
+                        del plugins[key]
+            known.pop(self.marketplace_name, None)
+
+            removed_components = set()
+            for name in manifest.components:
+                component = self.component_map.get(name)
+                if component is None:
+                    component = next(
+                        (
+                            item
+                            for item in self.catalog["components"]
+                            if name in item.get("aliases", [])
+                        ),
+                        None,
+                    )
+                kind = component.get("kind") if component else "plugin"
+                if kind in ("plugin", "skill") or (reset_template and kind == "template"):
+                    removed_components.add(name)
+
+            print("Resetting Claude Code:")
+            if self.dry_run:
+                for relative in sorted(remove_files):
+                    print("  [dry-run] rm {}".format(relative))
+                return
+            with FileTransaction(self.claude_dir) as transaction:
+                for relative in sorted(remove_files):
+                    transaction.remove(self.claude_dir / relative)
+                transaction.remove(self.marketplace_root)
+                transaction.remove(
+                    self.claude_dir / "plugins" / "cache" / self.marketplace_name
+                )
+                self._write_registries(
+                    transaction,
+                    settings,
+                    installed,
+                    known,
+                    existing_only=True,
+                )
+                remaining_files = sorted(set(manifest.files) - remove_files)
+                remaining_components = sorted(
+                    set(manifest.components) - removed_components
+                )
+                if remaining_files or remaining_components:
+                    next_manifest = Manifest(
+                        version=manifest.version,
+                        components=remaining_components,
+                        files=remaining_files,
+                        hashes={
+                            relative: digest
+                            for relative, digest in manifest.hashes.items()
+                            if relative in remaining_files
+                        },
+                    )
+                    transaction.write_json(self.manifest_path, next_manifest.as_dict())
+                else:
+                    transaction.remove(self.manifest_path)
+                transaction.commit()
+            print("  [ok] managed plugins/skills reset")
+
     def uninstall(self, confirm: bool = True) -> None:
         if not self.manifest_path.exists():
             print("No manifest found — nothing to uninstall.")
@@ -571,52 +682,3 @@ class ClaudeDeployment:
                             pass
             print("")
             print("Uninstalled {} files.".format(count))
-
-
-def parse_components(value: Optional[str]) -> Optional[List[str]]:
-    if value is None:
-        return None
-    return [item for item in value.split(",") if item]
-
-
-def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Deploy hukuhaka-harness to Claude Code")
-    parser.add_argument("--repo-root", type=Path, required=True, help=argparse.SUPPRESS)
-    parser.add_argument("--components")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--uninstall", action="store_true")
-    parser.add_argument("--force", action="store_true")
-    return parser
-
-
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(argv)
-    try:
-        deployment = ClaudeDeployment(
-            args.repo_root,
-            Path.home(),
-            parse_components(args.components),
-            dry_run=args.dry_run,
-            force=args.force,
-        )
-        if args.uninstall:
-            deployment.uninstall(confirm=True)
-        else:
-            deployment.deploy()
-        return 0
-    except InstallerError as exc:
-        print(exc.render(), file=sys.stderr)
-        return 1
-    except Exception as exc:
-        error = InstallerError(
-            str(exc),
-            host="claude",
-            stage="unexpected",
-            operation=type(exc).__name__,
-        )
-        print(error.render(), file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

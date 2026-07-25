@@ -1,4 +1,4 @@
-"""Atomic filesystem primitives and recoverable local transactions."""
+"""Shared errors, state, and atomic filesystem primitives."""
 
 from __future__ import annotations
 
@@ -10,10 +10,48 @@ import os
 import shutil
 import tempfile
 import uuid
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
-from .errors import InstallerError, StateError
+MANIFEST_SCHEMA = 2
+
+
+class InstallerError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        host: Optional[str] = None,
+        stage: Optional[str] = None,
+        operation: Optional[str] = None,
+        path: Optional[str] = None,
+    ) -> None:
+        super().__init__(message)
+        self.host = host
+        self.stage = stage
+        self.operation = operation
+        self.path = path
+
+    def render(self) -> str:
+        context = []
+        for name in ("host", "stage", "operation", "path"):
+            value = getattr(self, name)
+            if value:
+                context.append("{}={}".format(name, value))
+        return "installer{}: {}".format(
+            " [{}]".format(" ".join(context)) if context else "",
+            self,
+        )
+
+
+class StateError(InstallerError):
+    pass
+
+
+class DriftError(InstallerError):
+    pass
 
 
 def sha256_file(path: Path) -> str:
@@ -70,16 +108,6 @@ def remove_path(path: Path) -> None:
         path.unlink()
     elif path.is_dir():
         shutil.rmtree(str(path))
-
-
-def prune_empty_parents(path: Path, stop: Path) -> None:
-    current = path
-    while current != stop and stop in current.parents:
-        try:
-            current.rmdir()
-        except OSError:
-            break
-        current = current.parent
 
 
 class InstallerLock:
@@ -244,3 +272,57 @@ class FileTransaction:
             shutil.rmtree(str(self.root), ignore_errors=True)
             with contextlib.suppress(OSError):
                 self.transactions_root.rmdir()
+
+
+@dataclass
+class Manifest:
+    version: str = ""
+    components: List[str] = field(default_factory=list)
+    files: List[str] = field(default_factory=list)
+    hashes: Dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def load(cls, path: Path) -> "Manifest":
+        if not path.exists():
+            return cls()
+        data = load_json(path, {})
+        if not isinstance(data, dict):
+            raise StateError("manifest root must be an object", operation="read-manifest", path=str(path))
+        schema = data.get("schemaVersion", 1)
+        if schema not in (1, MANIFEST_SCHEMA):
+            raise StateError(
+                "unsupported manifest schema {}".format(schema),
+                operation="migrate-manifest",
+                path=str(path),
+            )
+        components = data.get("components", [])
+        files = data.get("files", [])
+        hashes = data.get("hashes", {})
+        if not isinstance(components, list) or not isinstance(files, list):
+            raise StateError(
+                "manifest components and files must be arrays",
+                operation="read-manifest",
+                path=str(path),
+            )
+        if not isinstance(hashes, dict):
+            raise StateError(
+                "manifest hashes must be an object",
+                operation="read-manifest",
+                path=str(path),
+            )
+        return cls(
+            version=str(data.get("version", "")),
+            components=sorted(str(item) for item in components if item),
+            files=sorted(str(item) for item in files if item),
+            hashes={str(key): str(value) for key, value in hashes.items()},
+        )
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "schemaVersion": MANIFEST_SCHEMA,
+            "version": self.version,
+            "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "components": sorted(set(self.components)),
+            "files": sorted(set(self.files)),
+            "hashes": dict(sorted(self.hashes.items())),
+        }

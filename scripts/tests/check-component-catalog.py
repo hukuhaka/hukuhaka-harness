@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Query and validate the public hukuhaka component catalog."""
+"""Validate the component catalog."""
 
 from __future__ import annotations
 
@@ -17,69 +17,6 @@ def load_catalog(root: Path) -> dict:
         return json.load(handle)
 
 
-def selected_hosts(host: str) -> tuple[str, ...]:
-    return HOSTS if host == "both" else (host,)
-
-
-def supports(component: dict, host: str) -> bool:
-    return any(name in component.get("hosts", {}) for name in selected_hosts(host))
-
-
-def component_description(root: Path, component: dict, host: str) -> str:
-    if component.get("description"):
-        return component["description"]
-    for host_name in selected_hosts(host):
-        manifest = component.get("hosts", {}).get(host_name, {}).get("manifest")
-        if not manifest:
-            continue
-        with (root / manifest).open(encoding="utf-8") as handle:
-            return json.load(handle).get("description", "")
-    return ""
-
-
-def discover(root: Path, catalog: dict, host: str) -> int:
-    for component in catalog.get("components", []):
-        if not supports(component, host):
-            continue
-        description = component_description(root, component, host).replace("\t", " ").replace("\n", " ")
-        if component.get("lifecycle") == "deprecated":
-            description = f"[deprecated] {description}"
-        default_on = component.get("default") is True and component.get("lifecycle") == "supported"
-        print(
-            "\t".join(
-                (
-                    component["name"],
-                    component["kind"],
-                    description,
-                    "true" if default_on else "false",
-                )
-            )
-        )
-    return 0
-
-
-def filter_components(catalog: dict, host: str, components_csv: str) -> int:
-    requested = {name for name in components_csv.split(",") if name}
-    names = [
-        component["name"]
-        for component in catalog.get("components", [])
-        if component["name"] in requested and supports(component, host)
-    ]
-    print(",".join(names))
-    return 0
-
-
-def lifecycle(catalog: dict, components_csv: str, state: str) -> int:
-    requested = {name for name in components_csv.split(",") if name}
-    names = [
-        component["name"]
-        for component in catalog.get("components", [])
-        if component["name"] in requested and component.get("lifecycle") == state
-    ]
-    print(",".join(names))
-    return 0
-
-
 def validate(root: Path, catalog: dict) -> int:
     errors: list[str] = []
     if catalog.get("schemaVersion") != 1:
@@ -93,10 +30,18 @@ def validate(root: Path, catalog: dict) -> int:
     names = [component.get("name") for component in components]
     if len(names) != len(set(names)):
         errors.append("component names must be unique")
+    aliases: list[str] = []
 
     known_manifests: set[Path] = set()
     for component in components:
         name = component.get("name", "<unnamed>")
+        component_aliases = component.get("aliases", [])
+        if not isinstance(component_aliases, list) or any(
+            not isinstance(alias, str) or not alias for alias in component_aliases
+        ):
+            errors.append(f"{name}: aliases must be an array of non-empty strings")
+            component_aliases = []
+        aliases.extend(component_aliases)
         if component.get("kind") not in {"plugin", "skill", "feature", "template"}:
             errors.append(f"{name}: unsupported kind")
         if component.get("lifecycle") not in {"supported", "deprecated"}:
@@ -133,6 +78,10 @@ def validate(root: Path, catalog: dict) -> int:
         path_value = component.get("path")
         if path_value and not (root / path_value).is_file():
             errors.append(f"{name}: missing path {path_value}")
+
+    identities = [str(name) for name in names] + aliases
+    if len(identities) != len(set(identities)):
+        errors.append("component names and aliases must be globally unique")
 
     discovered = {
         path.resolve()
@@ -171,21 +120,7 @@ def validate(root: Path, catalog: dict) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    discover_parser = subparsers.add_parser("discover")
-    discover_parser.add_argument("--host", choices=("claude", "codex", "both"), required=True)
-
-    filter_parser = subparsers.add_parser("filter")
-    filter_parser.add_argument("--host", choices=HOSTS, required=True)
-    filter_parser.add_argument("--components", required=True)
-
-    lifecycle_parser = subparsers.add_parser("lifecycle")
-    lifecycle_parser.add_argument("--components", required=True)
-    lifecycle_parser.add_argument("--state", choices=("supported", "deprecated"), required=True)
-
-    subparsers.add_parser("validate")
+    parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[2])
     return parser.parse_args()
 
 
@@ -193,12 +128,6 @@ def main() -> int:
     args = parse_args()
     root = args.root.resolve()
     catalog = load_catalog(root)
-    if args.command == "discover":
-        return discover(root, catalog, args.host)
-    if args.command == "filter":
-        return filter_components(catalog, args.host, args.components)
-    if args.command == "lifecycle":
-        return lifecycle(catalog, args.components, args.state)
     return validate(root, catalog)
 
 

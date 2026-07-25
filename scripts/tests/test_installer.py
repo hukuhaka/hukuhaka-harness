@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts.harness_installer.claude import ClaudeDeployment
-from scripts.harness_installer.errors import DriftError, InstallerError, StateError
-from scripts.harness_installer.extras import ExtrasSettings
-from scripts.harness_installer.filesystem import FileTransaction
-from scripts.harness_installer.install import Installer, build_parser
+from scripts.install.claude import ClaudeDeployment
+from scripts.install.codex import CodexGuidanceDeployment
+from scripts.install.common import DriftError, FileTransaction, InstallerError, StateError
+from scripts.install.main import Installer, build_parser
+from scripts.install.terminal import prompt_install_plan
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -211,28 +212,32 @@ class InstallerTestCase(unittest.TestCase):
         self.deployment(dry_run=True).deploy()
         self.assertFalse(self.claude.exists())
 
-    def test_extras_dry_run_does_not_migrate_legacy_state(self) -> None:
-        self.claude.mkdir(parents=True)
-        legacy = self.claude / "statusline.sh"
-        legacy.write_text("#!/bin/sh\n")
-        settings = self.claude / "settings.json"
-        settings.write_text(json.dumps({"statusLine": {"command": str(legacy)}}))
-        manager = ExtrasSettings(self.claude)
-        self.assertTrue(manager.mutate("migrate-legacy", dry_run=True))
-        self.assertTrue(legacy.exists())
-        self.assertIn("statusLine", json.loads(settings.read_text()))
+    def test_reset_preserves_template_and_rejects_modified_plugin(self) -> None:
+        self.deployment().deploy()
+        plugin = (
+            self.claude
+            / "plugins"
+            / "hukuhaka-plugin"
+            / "hukuhaka-report-planner"
+            / ".claude-plugin"
+            / "plugin.json"
+        )
+        plugin.write_text("user edit\n")
+        with self.assertRaises(DriftError):
+            self.deployment().reset_for_install()
+        self.assertTrue(plugin.exists())
 
-    def test_extras_reject_malformed_settings_without_mutation(self) -> None:
-        self.claude.mkdir(parents=True)
-        legacy = self.claude / "statusline.sh"
-        legacy.write_text("#!/bin/sh\n")
-        settings = self.claude / "settings.json"
-        settings.write_text("{broken")
-        with self.assertRaises(StateError):
-            ExtrasSettings(self.claude).mutate("migrate-legacy", dry_run=False)
-        self.assertTrue(legacy.exists())
-        self.assertEqual("{broken", settings.read_text())
+        self.deployment(force=True).reset_for_install()
+        self.assertFalse(plugin.exists())
+        self.assertTrue((self.claude / "CLAUDE.md").exists())
+        manifest = json.loads(self.manifest.read_text())
+        self.assertEqual(["claude-md"], manifest["components"])
 
+    def test_reset_can_include_managed_template(self) -> None:
+        self.deployment().deploy()
+        self.deployment().reset_for_install(reset_template=True)
+        self.assertFalse((self.claude / "CLAUDE.md").exists())
+        self.assertFalse(self.manifest.exists())
 
 class InstallerSelectionTests(unittest.TestCase):
     def installer(self, host: str = "claude", *selection: str) -> Installer:
@@ -241,8 +246,6 @@ class InstallerSelectionTests(unittest.TestCase):
             str(ROOT),
             "--host",
             host,
-            "--skip-preflight",
-            "--skip-extras",
             *selection,
         ]
         args = build_parser().parse_args(arguments)
@@ -254,9 +257,7 @@ class InstallerSelectionTests(unittest.TestCase):
         installer = self.installer()
         with mock.patch.object(
             installer, "current_components", return_value={"agent-teams"}
-        ), mock.patch.object(installer, "_tty_available", return_value=False), mock.patch.object(
-            installer, "_interactive_select"
-        ) as interactive:
+        ):
             selected = installer.choose_components()
 
         self.assertEqual(
@@ -270,7 +271,6 @@ class InstallerSelectionTests(unittest.TestCase):
             selected,
         )
         self.assertFalse(installer.args.selector_used)
-        interactive.assert_not_called()
 
     def test_explicit_selection_does_not_probe_tty(self) -> None:
         installer = self.installer(
@@ -289,17 +289,97 @@ class InstallerSelectionTests(unittest.TestCase):
             with self.assertRaisesRegex(InstallerError, "unknown component '{}'".format(name)):
                 installer.choose_components()
 
-    def test_no_tty_codex_fallback_does_not_run_configuration_wizard(self) -> None:
-        installer = self.installer("codex")
-        with mock.patch.object(
-            installer, "current_components", return_value=set()
-        ), mock.patch.object(installer, "_tty_available", return_value=False), mock.patch.object(
-            installer, "_deploy_codex", return_value=True
-        ), mock.patch.object(installer, "_configure_codex", return_value=True) as configure:
-            self.assertEqual(0, installer.run())
+    def test_declared_alias_resolves_to_current_component(self) -> None:
+        installer = self.installer(
+            "claude",
+            "--components",
+            "old-report-planner",
+        )
+        installer.aliases["old-report-planner"] = "hukuhaka-report-planner"
+        self.assertEqual(
+            ["hukuhaka-report-planner"],
+            installer.choose_components(),
+        )
 
-        self.assertFalse(installer.args.selector_used)
-        configure.assert_not_called()
+
+class CodexGuidanceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="hukuhaka codex ")
+        self.codex_home = Path(self.temp.name)
+        self.source = self.codex_home / "source.md"
+        self.source.write_text("# Managed\n")
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def deployment(self, *, force: bool = False) -> CodexGuidanceDeployment:
+        return CodexGuidanceDeployment(
+            self.source,
+            self.codex_home,
+            "1.0.13",
+            enabled=True,
+            force=force,
+        )
+
+    def test_install_and_uninstall_preserve_user_text(self) -> None:
+        target = self.codex_home / "AGENTS.md"
+        target.write_text("# User\n")
+        self.deployment().deploy()
+        self.assertIn("# User", target.read_text())
+        self.assertIn("# Managed", target.read_text())
+        CodexGuidanceDeployment(
+            self.source,
+            self.codex_home,
+            "1.0.13",
+            enabled=False,
+        ).uninstall()
+        self.assertEqual("# User\n", target.read_text())
+
+    def test_modified_managed_block_requires_force(self) -> None:
+        self.deployment().deploy()
+        target = self.codex_home / "AGENTS.md"
+        target.write_text(target.read_text().replace("# Managed", "# Changed"))
+        with self.assertRaises(DriftError):
+            self.deployment().deploy()
+        self.deployment(force=True).deploy()
+        self.assertIn("# Managed", target.read_text())
+
+
+class PlainTerminalSelectionTests(unittest.TestCase):
+    def test_hosts_are_rendered_separately_with_reset_before_install(self) -> None:
+        output = io.StringIO()
+        plans = prompt_install_plan(
+            io.StringIO(),
+            output,
+            sections=[
+                {
+                    "host": "claude",
+                    "label": "Claude Code",
+                    "available": True,
+                    "version": "2.1",
+                    "components": [{"name": "planner", "kind": "plugin"}],
+                    "selected": {"planner"},
+                },
+                {
+                    "host": "codex",
+                    "label": "Codex",
+                    "available": False,
+                    "version": "",
+                    "components": [],
+                    "selected": set(),
+                },
+            ],
+            keys=("down", "down", "toggle", "down", "down", "enter"),
+        )
+
+        self.assertEqual(1, len(plans))
+        self.assertEqual("claude", plans[0].host)
+        self.assertTrue(plans[0].reset_before_install)
+        self.assertFalse(plans[0].reset_templates)
+        rendered = output.getvalue()
+        self.assertIn("Claude Code", rendered)
+        self.assertIn("Codex", rendered)
+        self.assertIn("unavailable", rendered)
 
 
 if __name__ == "__main__":
