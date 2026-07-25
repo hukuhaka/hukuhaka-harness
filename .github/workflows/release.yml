@@ -38,3 +38,50 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+
+  live-install:
+    name: Live install (${{ matrix.os }})
+    needs: release
+    if: github.repository == 'hukuhaka/hukuhaka-harness'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Run the documented zero-argument installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          smoke_root=$(mktemp -d)
+          trap 'rm -rf "$smoke_root"' EXIT
+          mkdir -p "$smoke_root/bin" "$smoke_root/home"
+          cat > "$smoke_root/bin/claude" <<'SH'
+          #!/usr/bin/env bash
+          if [ "${1:-}" = "--version" ]; then
+              echo "claude release smoke"
+          fi
+          exit 0
+          SH
+          chmod +x "$smoke_root/bin/claude"
+          export HOME="$smoke_root/home"
+          export PATH="$smoke_root/bin:$PATH"
+          output=$(/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh)" 2>&1)
+          printf '%s\n' "$output"
+          expected_version="${GITHUB_REF_NAME#v}"
+          grep -Fq "Downloading hukuhaka-harness v${expected_version}..." <<<"$output"
+          grep -Fq "  Claude Code: complete" <<<"$output"
+          ! grep -Fq "unbound variable" <<<"$output"
+          python3 - "$HOME/.claude/.hukuhaka-manifest.json" "$expected_version" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as handle:
+              manifest = json.load(handle)
+          if manifest.get("version") != sys.argv[2]:
+              raise SystemExit(
+                  "manifest version {!r} != {!r}".format(
+                      manifest.get("version"), sys.argv[2]
+                  )
+              )
+          PY

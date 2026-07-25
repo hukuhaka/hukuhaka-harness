@@ -7,6 +7,20 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.1] — 2026-07-25
+
+### Fixed
+
+- Fixed the documented zero-argument remote installer on macOS Bash 3.2, where
+  an empty argument array under `set -u` stopped installation before the Python
+  runtime started.
+
+### Changed
+
+- Public releases now run the documented installer against the live GitHub
+  release on macOS and Ubuntu. Publication reports success only after public
+  validation, release creation, and both live-install jobs are green.
+
 ## [1.1.0] — 2026-07-25
 
 ### Added

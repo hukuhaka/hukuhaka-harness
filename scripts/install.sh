@@ -137,4 +137,8 @@ export PYTHONDONTWRITEBYTECODE=1
 RUNTIME_ARGS=(--repo-root "$SOURCE_DIR" --resolved-version "$RESOLVED_VERSION")
 $VERSION_EXPLICIT && RUNTIME_ARGS+=(--version-explicit)
 $LOCAL_SOURCE && RUNTIME_ARGS+=(--local-source)
-python3 -m scripts.install.main "${RUNTIME_ARGS[@]}" "${ARGS[@]}"
+if [ "${#ARGS[@]}" -eq 0 ]; then
+    python3 -m scripts.install.main "${RUNTIME_ARGS[@]}"
+else
+    python3 -m scripts.install.main "${RUNTIME_ARGS[@]}" "${ARGS[@]}"
+fi

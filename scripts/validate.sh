@@ -18,13 +18,27 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 cd "$REPO_DIR"
 
-ERRORS=0
-CHECKS=0
+if [ "$#" -ne 0 ]; then
+    if [ "$#" -eq 2 ] && [ "$1" = "--release" ]; then
+        if [ ! -x "$SCRIPT_DIR/release.sh" ]; then
+            echo "validate: --release is available only in the private source checkout." >&2
+            exit 2
+        fi
+        exec python3 -m scripts.release.main validate "$2"
+    fi
+    echo "Usage: scripts/validate.sh [--release vX.Y.Z]" >&2
+    exit 2
+fi
+
+PASSES=0
+FAILURES=0
+SKIPS=0
 VALIDATE_TMP=$(mktemp -d -t hukuhaka-validate-XXXXXX)
 trap 'rm -rf "$VALIDATE_TMP"' EXIT
 
-pass() { CHECKS=$((CHECKS+1)); echo "  [ok] $1"; }
-fail() { CHECKS=$((CHECKS+1)); ERRORS=$((ERRORS+1)); echo "  [FAIL] $1"; }
+pass() { PASSES=$((PASSES+1)); echo "  [ok] $1"; }
+fail() { FAILURES=$((FAILURES+1)); echo "  [FAIL] $1"; }
+skip() { SKIPS=$((SKIPS+1)); echo "  [skip] $1"; }
 
 # ── 1. JSON Syntax ──────────────────────────────────────────────────
 
@@ -121,7 +135,7 @@ else
 fi
 
 if [ ! -d "$SCRIPT_DIR/prepush/tests" ]; then
-    echo "  [skip] private pre-push workflow tests"
+    skip "private pre-push workflow tests"
 elif PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
     -s "$SCRIPT_DIR/prepush/tests" -p 'test_*.py' \
     > "$VALIDATE_TMP/prepush-tests.log" 2>&1; then
@@ -131,7 +145,7 @@ else
 fi
 
 if [ ! -d "$SCRIPT_DIR/release/tests" ]; then
-    echo "  [skip] private release workflow tests"
+    skip "private release workflow tests"
 elif PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
     -s "$SCRIPT_DIR/release/tests" -p 'test_*.py' \
     > "$VALIDATE_TMP/release-tests.log" 2>&1; then
@@ -141,7 +155,7 @@ else
 fi
 
 if [ ! -f "$REPO_DIR/eval/run.py" ]; then
-    echo "  [skip] eval v2 runner tests (private harness not present in this checkout)"
+    skip "eval v2 runner tests (private harness not present in this checkout)"
 elif PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
     -s "$REPO_DIR/eval/tests" -p 'test_*.py' > "$VALIDATE_TMP/eval-v2-tests.log" 2>&1; then
     pass "eval v2 transcript normalization and evidence contracts"
@@ -318,7 +332,7 @@ if command -v codex >/dev/null 2>&1; then
         fail "Codex native lifecycle — inspect $VALIDATE_TMP/codex-*.log"
     fi
 else
-    echo "  [skip] Codex native lifecycle (codex CLI not available)"
+    skip "Codex native lifecycle (codex CLI not available)"
 fi
 
 fake_codex_root="$VALIDATE_TMP/fake-codex-marketplace"
@@ -369,7 +383,7 @@ echo ""
 echo "Official docs refresh:"
 
 if [ ! -f "$SCRIPT_DIR/maintenance/refresh-officials.sh" ]; then
-    echo "  [skip] refresh-officials.sh (private maintainer script)"
+    skip "refresh-officials.sh (private maintainer script)"
 elif bash -n "$SCRIPT_DIR/maintenance/refresh-officials.sh" && "$SCRIPT_DIR/maintenance/refresh-officials.sh" --help > /dev/null; then
     pass "refresh-officials.sh syntax + help"
 else
@@ -384,7 +398,7 @@ echo ""
 echo "Report planner contract:"
 
 if [ ! -f "$REPORT_PLANNER_TEST" ]; then
-    echo "  [skip] report-planner static tests (private harness not present in this checkout)"
+    skip "report-planner static tests (private harness not present in this checkout)"
 elif node --test "$REPORT_PLANNER_TEST" > "$VALIDATE_TMP/report-planner-test.log" 2>&1; then
     pass "document contract + selective reference routing"
 else
@@ -414,7 +428,7 @@ for test_file in "${CODEX_TESTS[@]}"; do
 done
 
 if [ "$codex_tests_present" -eq 0 ]; then
-    echo "  [skip] Codex runtime tests (private harness not present in this checkout)"
+    skip "Codex runtime tests (private harness not present in this checkout)"
 elif [ "$codex_tests_present" -ne "${#CODEX_TESTS[@]}" ]; then
     fail "Codex runtime tests — incomplete private harness; missing: $codex_tests_missing"
 elif node --test "${CODEX_TESTS[@]}" > "$VALIDATE_TMP/codex-runtime-test.log" 2>&1; then
@@ -429,7 +443,7 @@ echo ""
 echo "Public release tree:"
 
 if [ ! -x "$SCRIPT_DIR/release.sh" ]; then
-    echo "  [skip] public tree build (private release tool not present)"
+    skip "public tree build (private release tool not present)"
 elif PYTHONDONTWRITEBYTECODE=1 python3 -m scripts.release.stage \
        --destination "$VALIDATE_TMP/public-stage" \
         > "$VALIDATE_TMP/public-stage.log" 2>&1; then
@@ -442,10 +456,9 @@ fi
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-if [ "$ERRORS" -eq 0 ]; then
-    echo "All $CHECKS checks passed."
+echo "$PASSES passed, $SKIPS skipped, $FAILURES failed."
+if [ "$FAILURES" -eq 0 ]; then
     exit 0
 else
-    echo "$ERRORS/$CHECKS checks failed."
     exit 1
 fi
