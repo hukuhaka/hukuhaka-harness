@@ -7,6 +7,68 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.2] — 2026-07-28
+
+### Added
+
+- Added an opt-in global Codex configuration wizard for
+  `$CODEX_HOME/config.toml`. It preserves unmanaged text and file mode, shows a
+  unified diff, keeps the prior file as `config.toml.hukuhaka-backup`, writes
+  atomically, and restores the original unless `codex doctor --json` confirms
+  that the config loads successfully.
+
+### Changed
+
+- Replaced implicit and multi-host automation with explicit host-first
+  commands such as `claude install --recommended --yes` and
+  `codex uninstall --yes`. Interactive installs detect installed host CLIs and
+  treat checked components as the exact desired managed state; non-TTY
+  zero-argument runs now exit with guidance instead of choosing Claude
+  implicitly.
+- Codex plugin installation now converges to the requested component set,
+  removes aliases only after the canonical plugin installs, and pins remote
+  marketplaces to the resolved release tag. Reset and uninstall remain
+  separate from global Codex configuration.
+
+### Fixed
+
+- Claude reset-and-install now uses one transaction, verifies the installed
+  manifest and files, and restores the previous install on failure. Claude and
+  Codex guidance removal also recover interrupted transactions before deciding
+  that there is nothing to do.
+- Missing Codex CLI and incomplete native operations are no longer reported as
+  successful installation or uninstall.
+- `--version=<x.y.z>` and `--source-dir=<path>` now work in the installer
+  bootstrap. Previously only the space-separated forms were recognised, so a
+  piped `curl … | bash -s -- --version=1.0.0` silently installed the latest
+  release instead of the requested one, and the version-agreement check could
+  not fail. An empty value is now rejected rather than falling back.
+- An installer rollback that itself fails no longer deletes its journal and
+  backups. The interrupted state is kept and replayed on the next run instead
+  of leaving `~/.claude` partly written with nothing left to recover from.
+- Codex guidance installs now recover interrupted runs and read state under the
+  installer lock. A run killed between the `AGENTS.md` write and the manifest
+  write used to leave every later run failing with "managed block is missing"
+  on a file the user never edited; `--force` was the only way out.
+- The installer no longer acts on a path that points outside `~/.claude`. An
+  entry containing `..` in the install manifest or in Claude Code's
+  `installed_plugins.json` used to be joined onto `~/.claude` and deleted for
+  real during install, reset, or uninstall — including files in your home
+  directory. Those paths are now refused, the error names the offending entry,
+  and nothing is touched. Recovery for a manifest that trips this is to delete
+  `~/.claude/.hukuhaka-manifest.json` and reinstall.
+- The installer now runs the source it downloaded and version-checked. It never
+  changed directory before starting the Python runtime, so running the
+  documented `curl … | bash` from any directory that happened to contain
+  `scripts/install/main.py` — a hukuhaka-harness clone being the obvious case —
+  executed that copy instead, silently and regardless of the requested version.
+- `--dry-run` uninstall no longer takes the installer lock. It used to create
+  `~/.claude`, write a lock file, and fail outright with "another hukuhaka
+  installer is already running" whenever a real install was in progress, even
+  though it modifies nothing.
+- Reset and uninstall now report interrupted transactions they replay, the way
+  install already did. The recovery happened either way; it was just silent.
+
 ## [1.1.1] — 2026-07-25
 
 ### Fixed

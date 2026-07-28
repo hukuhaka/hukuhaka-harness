@@ -42,10 +42,16 @@ test("task-resume-candidate returns the exact plan workflow candidate", () => {
   const previousPluginData = process.env.CLAUDE_PLUGIN_DATA;
   process.env.CLAUDE_PLUGIN_DATA = pluginData;
   try {
+    // Both the jobs and the spawned environment carry the same session id.
+    // task-resume-candidate filters by CODEX_COMPANION_SESSION_ID, so inheriting
+    // the ambient one from a real Claude session used to drop every fixture job
+    // and leave payload.candidate null. Pinning it makes the session scoping
+    // itself an asserted contract instead of something the test only survives
+    // when the variable happens to be unset.
     saveState(ROOT, {
       jobs: [
-        { id: "rescue-newer", jobClass: "task", workflow: "task", status: "completed", threadId: "rescue-thread", updatedAt: "2026-07-10T02:00:00Z" },
-        { id: "plan-ready", jobClass: "task", workflow: "plan", status: "completed", threadId: "plan-thread", updatedAt: "2026-07-10T01:00:00Z" }
+        { id: "rescue-newer", jobClass: "task", workflow: "task", status: "completed", threadId: "rescue-thread", sessionId: "test-session", updatedAt: "2026-07-10T02:00:00Z" },
+        { id: "plan-ready", jobClass: "task", workflow: "plan", status: "completed", threadId: "plan-thread", sessionId: "test-session", updatedAt: "2026-07-10T01:00:00Z" }
       ]
     });
 
@@ -53,13 +59,19 @@ test("task-resume-candidate returns the exact plan workflow candidate", () => {
       process.execPath,
       [COMPANION, "task-resume-candidate", "--workflow", "plan", "--cwd", ROOT, "--json"],
       {
-        env: { ...process.env, CLAUDE_PLUGIN_DATA: pluginData },
+        env: {
+          ...process.env,
+          CLAUDE_PLUGIN_DATA: pluginData,
+          CODEX_COMPANION_SESSION_ID: "test-session"
+        },
         encoding: "utf8"
       }
     );
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout);
     assert.equal(payload.workflow, "plan");
+    // Without this the test would still pass if session filtering vanished.
+    assert.equal(payload.sessionId, "test-session");
     assert.equal(payload.candidate.id, "plan-ready");
     assert.equal(payload.candidate.threadId, "plan-thread");
   } finally {

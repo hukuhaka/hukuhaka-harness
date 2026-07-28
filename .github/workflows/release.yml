@@ -32,9 +32,17 @@ jobs:
           echo "Version verified: $PROJECT_VERSION"
 
       - name: Run validation
-        run: scripts/validate.sh
+        env:
+          REPOSITORY_IS_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          profile=public
+          if [ "$REPOSITORY_IS_PRIVATE" = "true" ]; then
+            profile=private
+          fi
+          scripts/validate.sh --profile "$profile"
 
-      - name: Create GitHub Release
+      - name: Create private GitHub Release
+        if: github.event.repository.private
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
@@ -42,14 +50,14 @@ jobs:
   live-install:
     name: Live install (${{ matrix.os }})
     needs: release
-    if: github.repository == 'hukuhaka/hukuhaka-harness'
+    if: github.event.repository.private == false
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - name: Run the documented zero-argument installer
+      - name: Run the documented explicit Claude installer
         shell: bash
         run: |
           set -euo pipefail
@@ -66,11 +74,12 @@ jobs:
           chmod +x "$smoke_root/bin/claude"
           export HOME="$smoke_root/home"
           export PATH="$smoke_root/bin:$PATH"
-          output=$(/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh)" 2>&1)
-          printf '%s\n' "$output"
           expected_version="${GITHUB_REF_NAME#v}"
+          output=$(curl -fsSL "https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/${GITHUB_REF_NAME}/scripts/install.sh" \
+            | /bin/bash -s -- --version "$expected_version" claude install --recommended --yes 2>&1)
+          printf '%s\n' "$output"
           grep -Fq "Downloading hukuhaka-harness v${expected_version}..." <<<"$output"
-          grep -Fq "  Claude Code: complete" <<<"$output"
+          grep -Fq "  Claude Code: success" <<<"$output"
           ! grep -Fq "unbound variable" <<<"$output"
           python3 - "$HOME/.claude/.hukuhaka-manifest.json" "$expected_version" <<'PY'
           import json
@@ -85,3 +94,18 @@ jobs:
                   )
               )
           PY
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [release, live-install]
+    if: github.event.repository.private == false
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create public GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

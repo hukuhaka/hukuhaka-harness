@@ -31,7 +31,14 @@ jobs:
         run: pip install "tree-sitter-language-pack==0.9.1"
 
       - name: Run validation
-        run: scripts/validate.sh
+        env:
+          REPOSITORY_IS_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          profile=public
+          if [ "$REPOSITORY_IS_PRIVATE" = "true" ]; then
+            profile=private
+          fi
+          scripts/validate.sh --profile "$profile"
 
       - name: Check version bump on plugin changes
         if: github.event_name == 'pull_request' && matrix.os == 'ubuntu-latest' && matrix.python == '3.12'

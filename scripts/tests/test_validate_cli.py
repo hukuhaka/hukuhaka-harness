@@ -28,6 +28,17 @@ class ValidateCliTests(unittest.TestCase):
         self.assertEqual(2, result.returncode)
         self.assertIn("Usage:", result.stderr)
 
+    def test_invalid_profile_exits_two_without_running_validation(self) -> None:
+        result = subprocess.run(
+            (str(ROOT / "scripts" / "validate.sh"), "--profile", "unknown"),
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("profile must be private or public", result.stderr)
+
     def test_release_mode_is_rejected_in_public_checkout(self) -> None:
         with tempfile.TemporaryDirectory() as temp_name:
             root = Path(temp_name)

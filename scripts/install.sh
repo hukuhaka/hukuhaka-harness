@@ -6,7 +6,6 @@ REPO="hukuhaka/hukuhaka-harness"
 MIN_PYTHON="3.9"
 SOURCE_DIR=""
 REQUESTED_VERSION=""
-VERSION_EXPLICIT=false
 ARGS=("$@")
 
 for ((i = 0; i < ${#ARGS[@]}; i++)); do
@@ -19,8 +18,16 @@ for ((i = 0; i < ${#ARGS[@]}; i++)); do
         --version)
             ((i + 1 < ${#ARGS[@]})) || { echo "Error: --version requires a value." >&2; exit 2; }
             REQUESTED_VERSION="${ARGS[$((i + 1))]#v}"
-            VERSION_EXPLICIT=true
             i=$((i + 1))
+            ;;
+        --source-dir=*)
+            SOURCE_DIR="${ARGS[$i]#--source-dir=}"
+            [ -n "$SOURCE_DIR" ] || { echo "Error: --source-dir requires a value." >&2; exit 2; }
+            ;;
+        --version=*)
+            REQUESTED_VERSION="${ARGS[$i]#--version=}"
+            [ -n "$REQUESTED_VERSION" ] || { echo "Error: --version requires a value." >&2; exit 2; }
+            REQUESTED_VERSION="${REQUESTED_VERSION#v}"
             ;;
     esac
 done
@@ -134,8 +141,16 @@ SOURCE_VERSION=$(tr -d '[:space:]' < "$SOURCE_DIR/VERSION")
 
 export PYTHONPATH="$SOURCE_DIR${PYTHONPATH:+:$PYTHONPATH}"
 export PYTHONDONTWRITEBYTECODE=1
+# Run from the verified source, not from wherever the user happened to stand.
+# `python3 -m` puts the process cwd at sys.path[0], ahead of PYTHONPATH, and
+# scripts/ has no __init__.py -- so these are PEP 420 namespace packages whose
+# __path__ merges every match on sys.path. A caller's cwd containing
+# scripts/install/main.py therefore beat the tree this script just downloaded
+# and version-checked. Nothing in the runtime reads the caller's cwd:
+# --repo-root is already absolute (see the pwd -P above) and no code path calls
+# os.getcwd().
+cd "$SOURCE_DIR"
 RUNTIME_ARGS=(--repo-root "$SOURCE_DIR" --resolved-version "$RESOLVED_VERSION")
-$VERSION_EXPLICIT && RUNTIME_ARGS+=(--version-explicit)
 $LOCAL_SOURCE && RUNTIME_ARGS+=(--local-source)
 if [ "${#ARGS[@]}" -eq 0 ]; then
     python3 -m scripts.install.main "${RUNTIME_ARGS[@]}"

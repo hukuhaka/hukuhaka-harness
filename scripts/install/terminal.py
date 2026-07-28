@@ -1,15 +1,11 @@
-"""Terminal selection policy and arrow-key install UI."""
+"""Arrow-key installer UI on the caller's standard input and output."""
 
 from __future__ import annotations
 
-import argparse
-import sys
 import termios
 import tty
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, TextIO, Tuple
-
-from .common import InstallerError
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, TextIO, Tuple
 
 
 CLEAR = "\x1b[2J\x1b[H"
@@ -17,12 +13,13 @@ HIDE_CURSOR = "\x1b[?25l"
 SHOW_CURSOR = "\x1b[?25h"
 
 
-@dataclass
+@dataclass(frozen=True)
 class HostInstallPlan:
     host: str
     components: List[str]
-    reset_before_install: bool = False
-    reset_templates: bool = False
+    reset: bool = False
+    include_template: bool = False
+    configure_codex: bool = False
 
 
 @dataclass
@@ -30,16 +27,16 @@ class _HostState:
     host: str
     label: str
     version: str
-    available: bool
     enabled: bool
     components: Sequence[Dict[str, Any]]
     selected: Set[str]
     reset: bool = False
-    reset_templates: bool = False
+    include_template: bool = False
+    configure_codex: bool = False
 
 
 def csv_items(value: str) -> List[str]:
-    return list(dict.fromkeys(item for item in value.split(",") if item))
+    return list(dict.fromkeys(item.strip() for item in value.split(",") if item.strip()))
 
 
 def csv_value(items: Iterable[str]) -> str:
@@ -69,14 +66,15 @@ def _read_key(stream: TextIO) -> str:
 
 
 def _rows(states: Sequence[_HostState]) -> List[Tuple[str, int, int]]:
-    rows = []
+    rows = []  # type: List[Tuple[str, int, int]]
     for host_index, state in enumerate(states):
         rows.append(("header", host_index, -1))
-        if not state.available:
-            continue
         rows.append(("host", host_index, -1))
         for component_index, _ in enumerate(state.components):
             rows.append(("component", host_index, component_index))
+        rows.append(("recommended", host_index, -1))
+        if state.host == "codex":
+            rows.append(("configure", host_index, -1))
         rows.append(("reset", host_index, -1))
         rows.append(("template", host_index, -1))
     rows.extend((("install", -1, -1), ("exit", -1, -1)))
@@ -90,18 +88,15 @@ def _render(
     cursor: int,
 ) -> None:
     output.write(CLEAR)
-    output.write("hukuhaka-harness installer\n")
+    output.write("Hukuhaka Installer\n")
     output.write("  Up/Down move  Space select  Enter apply  q exit\n\n")
     for row_index, (kind, host_index, component_index) in enumerate(rows):
         marker = "> " if row_index == cursor else "  "
         if kind == "header":
             state = states[host_index]
-            if state.available:
-                detail = "detected{}".format(
-                    " ({})".format(state.version) if state.version else ""
-                )
-            else:
-                detail = "unavailable ({} CLI not found)".format(state.host)
+            detail = "detected{}".format(
+                " ({})".format(state.version) if state.version else ""
+            )
             output.write("{} — {}\n".format(state.label, detail))
             continue
         if kind == "install":
@@ -112,29 +107,46 @@ def _render(
             continue
 
         state = states[host_index]
+        disabled = "" if state.enabled else " (disabled)"
         if kind == "host":
-            output.write("{}[{}] Install/update\n".format(marker, "x" if state.enabled else " "))
+            output.write(
+                "{}[{}] Install/update{}\n".format(
+                    marker, "x" if state.enabled else " ", disabled
+                )
+            )
         elif kind == "component":
             component = state.components[component_index]
             checked = component["name"] in state.selected
+            suffix = " — optional" if component.get("default") is not True else ""
             output.write(
-                "{}    [{}] {} ({})\n".format(
+                "{}    [{}] {} ({}){}\n".format(
                     marker,
                     "x" if checked else " ",
                     component["name"],
                     component["kind"],
+                    suffix,
+                )
+            )
+        elif kind == "recommended":
+            output.write("{}    Select recommended\n".format(marker))
+        elif kind == "configure":
+            output.write(
+                "{}    [{}] Configure global Codex defaults\n".format(
+                    marker, "x" if state.configure_codex else " "
                 )
             )
         elif kind == "reset":
             output.write(
-                "{}    [{}] Reset managed plugins/skills before install\n".format(
+                "{}    [{}] Reset managed components before install\n".format(
                     marker, "x" if state.reset else " "
                 )
             )
         elif kind == "template":
             output.write(
-                "{}    [{}] Reset managed instruction template too\n".format(
-                    marker, "x" if state.reset_templates else " "
+                "{}    [{}] Also reset managed instruction template{}\n".format(
+                    marker,
+                    "x" if state.include_template else " ",
+                    "" if state.reset else " (enable Reset first)",
                 )
             )
     output.flush()
@@ -152,8 +164,7 @@ def prompt_install_plan(
             host=str(section["host"]),
             label=str(section["label"]),
             version=str(section.get("version", "")),
-            available=bool(section.get("available")),
-            enabled=bool(section.get("available")),
+            enabled=True,
             components=list(section["components"]),
             selected=set(section["selected"]),
         )
@@ -193,11 +204,12 @@ def prompt_install_plan(
                                 for component in state.components
                                 if component["name"] in state.selected
                             ],
-                            reset_before_install=state.reset,
-                            reset_templates=state.reset_templates,
+                            reset=state.reset,
+                            include_template=state.include_template,
+                            configure_codex=state.configure_codex,
                         )
                         for state in states
-                        if state.available and state.enabled and state.selected
+                        if state.enabled
                     ]
                 if kind == "exit":
                     return []
@@ -210,70 +222,24 @@ def prompt_install_plan(
                         state.selected.remove(name)
                     else:
                         state.selected.add(name)
+                elif kind == "recommended" and state.enabled:
+                    state.selected = {
+                        str(component["name"])
+                        for component in state.components
+                        if component.get("default") is True
+                        and component.get("lifecycle") == "supported"
+                    }
+                elif kind == "configure" and state.enabled:
+                    state.configure_codex = not state.configure_codex
                 elif kind == "reset" and state.enabled:
                     state.reset = not state.reset
                     if not state.reset:
-                        state.reset_templates = False
+                        state.include_template = False
                 elif kind == "template" and state.enabled and state.reset:
-                    state.reset_templates = not state.reset_templates
+                    state.include_template = not state.include_template
             cursor = selectable[cursor_position]
     finally:
         if file_descriptor is not None and previous is not None:
             termios.tcsetattr(file_descriptor, termios.TCSADRAIN, previous)
             output_stream.write(SHOW_CURSOR + "\n")
             output_stream.flush()
-
-
-def choose_components(
-    *,
-    args: argparse.Namespace,
-    available: Sequence[Dict[str, Any]],
-    current: Set[str],
-    validate_names: Callable[[Iterable[str]], List[str]],
-    component_map: Dict[str, Dict[str, Any]],
-) -> List[str]:
-    if args.all:
-        selected = [
-            str(component["name"])
-            for component in available
-            if component.get("default") is True and component.get("lifecycle") == "supported"
-        ]
-    elif args.components is not None:
-        selected = validate_names(csv_items(args.components))
-    elif args.add or args.remove:
-        add = validate_names(csv_items(args.add)) if args.add else []
-        remove = validate_names(csv_items(args.remove)) if args.remove else []
-        selected_set = (current | set(add)) - set(remove)
-        order = [str(component["name"]) for component in available]
-        selected = [name for name in order if name in selected_set]
-    else:
-        defaults = {
-            str(component["name"])
-            for component in available
-            if component.get("default") is True
-            and component.get("lifecycle") == "supported"
-        }
-        selected_set = current | defaults
-        order = [str(component["name"]) for component in available]
-        selected = [name for name in order if name in selected_set]
-        print(
-            "No interactive terminal detected; preserving current components "
-            "and adding supported defaults.",
-            file=sys.stderr,
-        )
-
-    selected = validate_names(selected)
-    if not selected:
-        raise InstallerError(
-            "empty selection rejected; use --uninstall to remove everything",
-            stage="component-selection",
-        )
-    deprecated = [
-        name for name in selected if component_map[name].get("lifecycle") == "deprecated"
-    ]
-    if deprecated:
-        print(
-            "Warning: deprecated component(s) selected: {}".format(csv_value(deprecated)),
-            file=sys.stderr,
-        )
-    return selected

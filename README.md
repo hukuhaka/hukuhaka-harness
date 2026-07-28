@@ -22,10 +22,9 @@ imply that a Claude Code plugin is portable to Codex.
 
 ## Install
 
-The public installer supports Claude Code, Codex, or both. The default
-interactive flow shows Claude Code and Codex as separate terminal sections.
-Explicit non-interactive operations that omit `--host` still target Claude
-Code for backward compatibility.
+The public installer detects Claude Code and Codex, shows only the hosts that
+are installed, and applies each selected host independently. Automation always
+names exactly one host; there is no implicit default host or `both` command.
 
 ### Requirements and support
 
@@ -56,53 +55,69 @@ only the managed block on uninstall. `CODEX_HOME` defaults to `~/.codex`.
 ### Interactive install
 
 ```bash
+# From a clone:
+./scripts/install.sh
+
+# From the public repository:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh)"
 ```
 
 The installer uses an arrow-key terminal selector on standard input/output:
 Up/Down moves, Space selects, and Enter applies. It detects the `claude` and
-`codex` CLIs, shows each available host separately, and disables a host whose
-CLI is missing. Each host section selects its own components and can reset
-managed plugins and skills before installing. The reset can optionally include
-the managed `CLAUDE.md` or `AGENTS.md` template. Codex memory, `config.toml`,
-and Claude settings unrelated to the harness are never reset. The final choices
-are `Install / Exit`.
+`codex` CLIs and shows only available hosts. A component checkbox is the final
+desired state: selected managed components are installed or updated and
+unselected installed components are removed. Each host can reset managed
+plugins and skills before installing; template reset remains a separate
+choice. Claude is applied before Codex, and an independent Codex operation is
+still attempted if Claude fails.
+
+Codex also offers an opt-in `Configure global Codex defaults` choice. It is
+unchecked by default. Reset and uninstall never modify Codex `config.toml`,
+memory, or unrelated Claude settings.
 
 The interactive command uses `bash -c` so stdin remains attached to the
 terminal. `curl ... | bash` remains supported for explicit non-interactive
 flags, but cannot accept arrow-key input because the script itself occupies
 stdin.
 
-Without a TTY and without explicit selection flags, the installer keeps the
-current components and adds supported defaults for the selected host. The
-non-interactive default host remains Claude Code. Use `--add` for an incremental
-addition or `--components` to declare the complete desired component set.
+Without a TTY, a zero-argument run exits with guidance and changes nothing.
+If neither host CLI is installed, the interactive installer also changes
+nothing and exits nonzero.
 
 ### Claude Code
 
-Non-interactive variants retain Claude Code as the default host:
+For automation, `--recommended` selects supported catalog defaults and
+`--components` declares the complete desired component state:
 
 ```bash
-curl -fsSL .../install.sh | bash -s -- --all
-curl -fsSL .../install.sh | bash -s -- --components hukuhaka-report-planner,hukuhaka-engineering-plan,hukuhaka-codex,claude-md
-curl -fsSL .../install.sh | bash -s -- --uninstall
-curl -fsSL .../install.sh | bash -s -- --all --reset-before-install
+./scripts/install.sh claude install --recommended --yes
+./scripts/install.sh claude install \
+  --components hukuhaka-report-planner,hukuhaka-engineering-plan,hukuhaka-codex,claude-md \
+  --yes
+./scripts/install.sh claude reset --recommended --include-template --yes
+./scripts/install.sh claude uninstall --yes
 ```
 
 ### Codex
 
-Use the same installer when you want host-aware selection, updates, and
-uninstall behavior:
+Codex has the same component lifecycle:
+
+```bash
+./scripts/install.sh codex install --recommended --yes
+./scripts/install.sh codex reset --recommended --include-template --yes
+./scripts/install.sh codex uninstall --yes
+```
+
+Remote automation passes the same host-first arguments:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh \
-  | bash -s -- --host codex --all
+  | bash -s -- codex install --recommended --yes
 ```
 
-For scripted clean reinstalls, use `--reset-before-install`. Add
-`--reset-templates` only when the installer-managed instruction template should
-also be replaced. Modified managed files stop the reset unless `--force` is
-explicitly supplied.
+Modified managed files stop replacement unless `--force` is explicitly
+supplied. `--dry-run` takes no installer lock, writes no file, and runs no
+mutating host command.
 
 The equivalent native Codex commands are:
 
@@ -118,12 +133,22 @@ the engineering planner as `$engineering-plan`, or let Codex select them from
 their descriptions. The `agents-md` template is installed by this repository's
 host-aware installer rather than the native plugin marketplace.
 
-### Both hosts
+### Global Codex defaults
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hukuhaka/hukuhaka-harness/main/scripts/install.sh \
-  | bash -s -- --host both --all
+./scripts/install.sh codex configure
+./scripts/install.sh codex configure --recommended --yes
 ```
+
+The configurator edits only global `$CODEX_HOME/config.toml` (default
+`~/.codex/config.toml`). It does not set a model and does not change sandbox,
+approval, web search, MCP, provider, profile, or project configuration. It
+shows a unified diff, preserves unmanaged keys, comments, order, and file mode,
+and stores the previous file as `config.toml.hukuhaka-backup`. Unsafe duplicate
+managed keys and inline managed tables are rejected before writing. After an
+atomic replacement, `codex doctor --json` must report `config.load` as `ok` or
+the original file is restored. See the
+[Codex configuration reference](https://developers.openai.com/codex/config-reference/).
 
 ## Report planner workflow
 

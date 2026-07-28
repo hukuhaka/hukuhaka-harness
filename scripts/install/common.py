@@ -12,8 +12,8 @@ import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from pathlib import Path, PurePosixPath
+from typing import Any, Dict, Iterator, List, Optional, Set
 
 MANIFEST_SCHEMA = 2
 
@@ -110,6 +110,45 @@ def remove_path(path: Path) -> None:
         shutil.rmtree(str(path))
 
 
+def ensure_within(
+    root: Path,
+    target: Path,
+    *,
+    operation: str,
+    message: str = "path escapes installer state root",
+) -> Path:
+    """Reject a target that lands outside root, and return it normalised.
+
+    Lexical on purpose: ``os.path.abspath`` never touches the filesystem, so a
+    state root that is itself a symlink still compares against its own children.
+    Following links would also be pointless for deletion, because remove_path()
+    unlinks a symlink rather than descending through it.
+    """
+    base = Path(os.path.abspath(str(root)))
+    resolved = Path(os.path.abspath(str(target)))
+    if resolved != base and base not in resolved.parents:
+        raise StateError(message, operation=operation, path=str(resolved))
+    return resolved
+
+
+def safe_join(root: Path, relative: str, *, operation: str) -> Path:
+    """Join a manifest-supplied relative path that cannot escape root.
+
+    Manifest entries are produced from ``Path.relative_to(...).as_posix()``, so
+    every legitimate value is relative, POSIX-separated and free of "..". A
+    hand-edited or corrupted manifest is the only way to get anything else, and
+    joining one of those blindly is how "../../x" became a deletion target.
+    """
+    pure = PurePosixPath(relative)
+    if not pure.parts or pure.is_absolute() or ".." in pure.parts:
+        raise StateError(
+            "manifest path is not a safe relative path",
+            operation=operation,
+            path=relative,
+        )
+    return ensure_within(root, root / relative, operation=operation)
+
+
 class InstallerLock:
     def __init__(self, root: Path) -> None:
         self.path = root / ".hukuhaka-installer.lock"
@@ -178,22 +217,20 @@ class FileTransaction:
         backup_root = Path(os.path.abspath(str(root / "backups")))
         validated = []
         for entry in reversed(entries):
-            target = Path(os.path.abspath(str(entry["target"])))
-            if target != state_root and state_root not in target.parents:
-                raise StateError(
-                    "transaction target escapes installer state root",
-                    operation="recover-transaction",
-                    path=str(target),
-                )
+            target = ensure_within(
+                state_root,
+                Path(str(entry["target"])),
+                operation="recover-transaction",
+                message="transaction target escapes installer state root",
+            )
             backup = None
             if entry["existed"]:
-                backup = Path(os.path.abspath(str(root / str(entry["backup"]))))
-                if backup != backup_root and backup_root not in backup.parents:
-                    raise StateError(
-                        "transaction backup escapes transaction root",
-                        operation="recover-transaction",
-                        path=str(backup),
-                    )
+                backup = ensure_within(
+                    backup_root,
+                    root / str(entry["backup"]),
+                    operation="recover-transaction",
+                    message="transaction backup escapes transaction root",
+                )
                 if not backup.exists() and not backup.is_symlink():
                     raise StateError(
                         "transaction backup is missing",
@@ -219,7 +256,30 @@ class FileTransaction:
     def _write_journal(self, state: str) -> None:
         atomic_write_json(self.journal_path, {"state": state, "entries": self.entries})
 
+    def _require_within(
+        self, target: Path, operation: str, *, allow_root: bool = True
+    ) -> None:
+        """Refuse a target this transaction has no business touching.
+
+        Guarding the primitive rather than each call site is what makes "a
+        transaction never leaves its own state root" a property of the class
+        instead of a claim about every caller.
+        """
+        resolved = ensure_within(
+            self.state_root,
+            target,
+            operation=operation,
+            message="transaction target escapes installer state root",
+        )
+        if not allow_root and resolved == Path(os.path.abspath(str(self.state_root))):
+            raise StateError(
+                "refusing to remove the installer state root",
+                operation=operation,
+                path=str(resolved),
+            )
+
     def snapshot(self, target: Path) -> None:
+        self._require_within(target, "snapshot-transaction")
         key = str(target.absolute())
         if key in self.seen:
             return
@@ -251,6 +311,11 @@ class FileTransaction:
         self.write_bytes(target, source.read_bytes(), mode)
 
     def remove(self, target: Path) -> bool:
+        # Before the existence test, not after: a missing "../x" would otherwise
+        # return False silently, and reset_for_install() then drops the entry
+        # from the rewritten manifest -- laundering away the only evidence that
+        # the manifest was ever poisoned.
+        self._require_within(target, "remove-transaction", allow_root=False)
         if not target.exists() and not target.is_symlink():
             return False
         self.snapshot(target)
@@ -265,13 +330,55 @@ class FileTransaction:
         self._restore_entries(self.root, self.entries)
 
     def __exit__(self, exc_type: Any, exc: Any, traceback: Any) -> None:
-        try:
-            if exc_type is not None and not self.committed:
+        if exc_type is not None and not self.committed:
+            try:
                 self.rollback()
-        finally:
-            shutil.rmtree(str(self.root), ignore_errors=True)
-            with contextlib.suppress(OSError):
-                self.transactions_root.rmdir()
+            except Exception as rollback_error:
+                # Do NOT discard the journal or the backups here. _restore_entries
+                # validates every entry before it mutates anything, so a failure
+                # can mean nothing was restored at all. Deleting this directory
+                # would leave the state root half-written with no evidence, and
+                # recover_pending() would find nothing to replay.
+                raise StateError(
+                    "rollback failed; recovery evidence kept and will be replayed"
+                    " on the next run",
+                    operation="rollback-transaction",
+                    path=str(self.root),
+                ) from rollback_error
+        shutil.rmtree(str(self.root), ignore_errors=True)
+        with contextlib.suppress(OSError):
+            self.transactions_root.rmdir()
+
+
+@contextlib.contextmanager
+def installer_state(root: Path, *, dry_run: bool) -> "Iterator[bool]":
+    """Enter a state root for one lifecycle operation; yield write permission.
+
+    The ceremony this replaces was copied five times in three shapes, and the
+    differences between the shapes were bugs rather than intent:
+
+    - A dry run must not take the lock. InstallerLock.__enter__ mkdir()s the
+      root and writes a pid, so acquiring it during --dry-run both creates
+      state and aborts outright when a real install already holds it. One of
+      the five sites avoided that with nullcontext, one did not.
+    - recover_pending()'s count must be reported. Two sites discarded it, so
+      they replayed interrupted transactions without telling anyone.
+
+    Yielding the write permission rather than the lock keeps the dry-run and
+    real paths as one body, which is what stops them drifting apart again.
+
+    Not reentrant: flock is per file descriptor, so a caller already inside
+    this manager cannot enter it again for the same root.
+    """
+    if dry_run:
+        yield False
+        return
+    root.mkdir(parents=True, exist_ok=True)
+    with InstallerLock(root):
+        recovered = FileTransaction.recover_pending(root)
+        if recovered:
+            print("  [recovered] {} interrupted transaction(s)".format(recovered))
+        yield True
 
 
 @dataclass

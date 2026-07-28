@@ -68,7 +68,9 @@ fi
             )
             return result, calls, str(source.resolve())
 
-    def run_remote_bootstrap(self) -> Tuple[subprocess.CompletedProcess[str], Path, List[str]]:
+    def run_remote_bootstrap(
+        self, arguments: Sequence[str] = (), *, decoy: bool = False
+    ) -> Tuple[subprocess.CompletedProcess[str], Path, List[str]]:
         temp_context = tempfile.TemporaryDirectory()
         self.addCleanup(temp_context.cleanup)
         temp = Path(temp_context.name)
@@ -158,6 +160,21 @@ exit 0
         )
         fake_claude.chmod(0o755)
 
+        if decoy:
+            # A directory that merely looks like the package root is enough.
+            # scripts/ carries no __init__.py, so `python3 -m scripts.install.main`
+            # resolves through PEP 420 namespace packages whose __path__ is the
+            # concatenation of every match on sys.path -- and sys.path[0] is the
+            # process cwd, which comes before PYTHONPATH.
+            decoy_runtime = temp / "scripts" / "install" / "main.py"
+            decoy_runtime.parent.mkdir(parents=True)
+            decoy_runtime.write_text(
+                "import os\n"
+                "with open(os.environ['BOOTSTRAP_DECOY_MARKER'], 'w') as handle:\n"
+                "    handle.write('decoy ran')\n",
+                encoding="utf-8",
+            )
+
         home = temp / "home"
         home.mkdir()
         env = os.environ.copy()
@@ -168,11 +185,12 @@ exit 0
                 "BOOTSTRAP_ARCHIVE": str(archive),
                 "BOOTSTRAP_VERSION": version,
                 "BOOTSTRAP_PYTHON_LOG": str(python_log),
+                "BOOTSTRAP_DECOY_MARKER": str(temp / "decoy-ran.txt"),
             }
         )
         script_text = (ROOT / "scripts" / "install.sh").read_text(encoding="utf-8")
         result = subprocess.run(
-            ("/bin/bash", "-c", script_text),
+            ("/bin/bash", "-c", script_text, "install.sh") + tuple(arguments),
             cwd=temp,
             env=env,
             text=True,
@@ -206,8 +224,8 @@ exit 0
 
     def test_user_arguments_are_forwarded_once_and_unchanged(self) -> None:
         user_arguments = (
-            "--host",
             "codex",
+            "install",
             "--components",
             "alpha,beta",
             "--dry-run",
@@ -230,8 +248,61 @@ exit 0
             calls,
         )
 
-    def test_remote_zero_argument_bootstrap_downloads_and_installs_once(self) -> None:
+    def test_equals_form_options_are_parsed_by_the_pre_scan(self) -> None:
+        # argparse binds --version=X, so the pre-scan must too. When it does not,
+        # REQUESTED_VERSION stays empty, the source/resolved version agreement
+        # check compares the source version to itself and cannot fail, and the
+        # wrong version is installed with no error.
+        user_arguments = (
+            "--version=1.1.1",
+            "claude",
+            "install",
+            "--recommended",
+            "--dry-run",
+        )
+        result, calls, source = self.run_bootstrap(user_arguments)
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(
+            [
+                "__CALL__",
+                "-m",
+                "scripts.install.main",
+                "--repo-root",
+                source,
+                "--resolved-version",
+                "1.1.1",
+                "--local-source",
+            ]
+            + list(user_arguments),
+            calls,
+        )
+
+    def test_equals_form_version_mismatch_is_rejected(self) -> None:
+        result, _, _ = self.run_bootstrap(("--version=9.9.9",))
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("but source VERSION is 1.1.1", result.stderr)
+
+    def test_equals_form_options_require_a_value(self) -> None:
+        result, _, _ = self.run_bootstrap(("--version=",))
+
+        self.assertEqual(2, result.returncode)
+        self.assertIn("--version requires a value", result.stderr)
+
+    def test_remote_zero_argument_bootstrap_requires_a_terminal(self) -> None:
         result, home, calls = self.run_remote_bootstrap()
+
+        self.assertEqual(2, result.returncode, result.stderr)
+        self.assertIn("interactive installation requires a terminal", result.stderr)
+        runtime_calls = [line for line in calls if "-m scripts.install.main" in line]
+        self.assertEqual(1, len(runtime_calls), calls)
+        self.assertFalse((home / ".claude" / ".hukuhaka-manifest.json").exists())
+
+    def test_remote_explicit_bootstrap_downloads_and_installs_once(self) -> None:
+        result, home, calls = self.run_remote_bootstrap(
+            ("claude", "install", "--recommended", "--yes")
+        )
 
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("Downloading hukuhaka-harness v1.1.1...", result.stdout)
@@ -241,6 +312,24 @@ exit 0
         manifest = home / ".claude" / ".hukuhaka-manifest.json"
         self.assertTrue(manifest.is_file(), result.stdout)
         self.assertIn('"version": "1.1.1"', manifest.read_text(encoding="utf-8"))
+
+    def test_remote_bootstrap_ignores_a_lookalike_runtime_in_the_caller_cwd(self) -> None:
+        # The documented `curl ... | bash` run from inside any directory that
+        # happens to hold scripts/install/main.py -- a hukuhaka-harness clone
+        # being the obvious one. The downloaded, version-checked tree must be
+        # what executes; before this was fixed the caller's copy won outright,
+        # which made an attacker-writable cwd a code-execution vector during an
+        # install of a verified release.
+        result, home, _ = self.run_remote_bootstrap(
+            ("claude", "install", "--recommended", "--yes"),
+            decoy=True,
+        )
+        marker = home.parent / "decoy-ran.txt"
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertFalse(marker.exists(), "the caller's cwd shadowed the verified runtime")
+        manifest = home / ".claude" / ".hukuhaka-manifest.json"
+        self.assertTrue(manifest.is_file(), result.stdout)
 
 
 if __name__ == "__main__":

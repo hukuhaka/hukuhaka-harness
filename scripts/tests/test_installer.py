@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import tempfile
@@ -9,9 +10,15 @@ from unittest import mock
 
 from scripts.install.claude import ClaudeDeployment
 from scripts.install.codex import CodexGuidanceDeployment
-from scripts.install.common import DriftError, FileTransaction, InstallerError, StateError
-from scripts.install.main import Installer, build_parser
-from scripts.install.terminal import prompt_install_plan
+from scripts.install.common import (
+    DriftError,
+    FileTransaction,
+    InstallerError,
+    InstallerLock,
+    StateError,
+)
+from scripts.install.main import HostResult, Installer, build_parser
+from scripts.install.terminal import HostInstallPlan, prompt_install_plan
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,6 +113,22 @@ class InstallerTestCase(unittest.TestCase):
         self.assertEqual("pre-transaction edit\n", target.read_text())
         self.assertEqual(original_manifest, self.manifest.read_bytes())
 
+    def test_reset_install_failure_restores_the_previous_install(self) -> None:
+        self.deployment().deploy()
+        original_manifest = self.manifest.read_bytes()
+        target = self.claude / "CLAUDE.md"
+        original_target = target.read_bytes()
+        deployment = self.deployment(force=True)
+        with mock.patch.object(
+            deployment,
+            "_write_registries",
+            side_effect=InstallerError("injected reset failure"),
+        ):
+            with self.assertRaises(InstallerError):
+                deployment.deploy(reset=True, reset_template=True)
+        self.assertEqual(original_manifest, self.manifest.read_bytes())
+        self.assertEqual(original_target, target.read_bytes())
+
     def test_pending_transaction_is_recovered_on_next_run(self) -> None:
         self.claude.mkdir(parents=True)
         target = self.claude / "settings.json"
@@ -116,6 +139,18 @@ class InstallerTestCase(unittest.TestCase):
         self.assertEqual("new\n", target.read_text())
         self.assertEqual(1, FileTransaction.recover_pending(self.claude))
         self.assertEqual("old\n", target.read_text())
+
+    def test_uninstall_recovers_before_manifest_noop_check(self) -> None:
+        deployment = self.deployment(force=True)
+        deployment.deploy()
+        transaction = FileTransaction(deployment.claude_dir)
+        transaction.__enter__()
+        transaction.remove(deployment.manifest_path)
+
+        deployment.uninstall(confirm=False)
+
+        self.assertFalse(self.manifest.exists())
+        self.assertFalse((self.claude / "CLAUDE.md").exists())
 
     def test_snapshot_is_not_journaled_until_backup_exists(self) -> None:
         self.claude.mkdir(parents=True)
@@ -129,6 +164,33 @@ class InstallerTestCase(unittest.TestCase):
         journal = json.loads(transaction.journal_path.read_text())
         self.assertEqual([], journal["entries"])
         transaction.__exit__(None, None, None)
+
+    def test_failed_rollback_keeps_recovery_evidence(self) -> None:
+        self.claude.mkdir(parents=True)
+        target = self.claude / "settings.json"
+        target.write_text("old\n")
+        transaction = FileTransaction(self.claude)
+        transaction.__enter__()
+        transaction.write_bytes(target, b"new\n")
+        with mock.patch("shutil.copy2", side_effect=OSError("injected restore failure")):
+            with self.assertRaises(StateError):
+                transaction.__exit__(InstallerError, InstallerError("boom"), None)
+        # The journal and its backups must survive a failed rollback, otherwise
+        # the state root is left half-written with nothing left to replay.
+        self.assertTrue(transaction.journal_path.is_file())
+        self.assertEqual(1, FileTransaction.recover_pending(self.claude))
+        self.assertEqual("old\n", target.read_text())
+
+    def test_successful_rollback_removes_the_transaction_directory(self) -> None:
+        self.claude.mkdir(parents=True)
+        target = self.claude / "settings.json"
+        target.write_text("old\n")
+        transaction = FileTransaction(self.claude)
+        transaction.__enter__()
+        transaction.write_bytes(target, b"new\n")
+        transaction.__exit__(InstallerError, InstallerError("boom"), None)
+        self.assertEqual("old\n", target.read_text())
+        self.assertFalse(transaction.root.exists())
 
     def test_recovery_rejects_target_outside_state_root(self) -> None:
         self.claude.mkdir(parents=True)
@@ -144,6 +206,101 @@ class InstallerTestCase(unittest.TestCase):
             FileTransaction.recover_pending(self.claude)
         self.assertEqual("keep\n", outside.read_text())
         transaction.__exit__(None, None, None)
+
+    def test_transaction_refuses_targets_outside_its_own_state_root(self) -> None:
+        self.claude.mkdir(parents=True)
+        outside = self.home / "outside.txt"
+        outside.write_text("keep\n")
+        transaction = FileTransaction(self.claude)
+        transaction.__enter__()
+        try:
+            # remove() has to check before its existence test. A missing "../x"
+            # used to return False silently, and reset_for_install() then drops
+            # the entry from the rewritten manifest -- laundering the evidence.
+            with self.assertRaises(StateError):
+                transaction.remove(self.claude / ".." / "never-existed.txt")
+            # Removing the state root itself would rmtree the live transaction.
+            with self.assertRaises(StateError):
+                transaction.remove(self.claude)
+            with self.assertRaises(StateError):
+                transaction.snapshot(outside)
+            journal = json.loads(transaction.journal_path.read_text())
+            self.assertEqual([], journal["entries"])
+            self.assertEqual("keep\n", outside.read_text())
+        finally:
+            transaction.__exit__(None, None, None)
+
+    def test_uninstall_rejects_a_manifest_entry_outside_the_state_root(self) -> None:
+        self.claude.mkdir(parents=True)
+        outside = self.home / "outside.txt"
+        outside.write_text("keep\n")
+        self.manifest.write_text(
+            json.dumps({"schemaVersion": 2, "files": ["../outside.txt"], "hashes": {}})
+        )
+        with self.assertRaises(StateError):
+            self.deployment(force=True).uninstall(confirm=False)
+        self.assertEqual("keep\n", outside.read_text())
+        self.assertTrue(self.manifest.exists())
+
+    def test_reset_rejects_an_entry_that_escapes_the_prefix_filter(self) -> None:
+        self.claude.mkdir(parents=True)
+        outside = self.home / "outside.txt"
+        outside.write_text("keep\n")
+        # Satisfies startswith("plugins/hukuhaka-plugin/") yet resolves to $HOME.
+        escaping = "plugins/hukuhaka-plugin/../../../outside.txt"
+        self.manifest.write_text(
+            json.dumps({"schemaVersion": 2, "files": [escaping], "hashes": {}})
+        )
+        with self.assertRaises(StateError):
+            self.deployment(force=True).reset_for_install()
+        self.assertEqual("keep\n", outside.read_text())
+        self.assertIn(escaping, json.loads(self.manifest.read_text())["files"])
+
+    def test_deploy_rejects_a_stale_manifest_entry_outside_the_state_root(self) -> None:
+        self.deployment().deploy()
+        outside = self.home / "outside.txt"
+        outside.write_text("keep\n")
+        manifest = json.loads(self.manifest.read_text())
+        manifest["files"].append("../outside.txt")
+        self.manifest.write_text(json.dumps(manifest))
+        # force=True on purpose: _check_drift() returns early under --force, so
+        # this proves the gate is in build_plan() and not the drift check.
+        with self.assertRaises(StateError):
+            self.deployment(force=True).deploy()
+        self.assertEqual("keep\n", outside.read_text())
+        self.assertTrue((self.claude / "CLAUDE.md").exists())
+
+    def test_deploy_rejects_a_registry_key_that_escapes_the_marketplace_root(self) -> None:
+        plugins_dir = self.claude / "plugins"
+        plugins_dir.mkdir(parents=True)
+        outside = self.home / "outside.txt"
+        outside.write_text("keep\n")
+        (plugins_dir / "installed_plugins.json").write_text(
+            json.dumps(
+                {
+                    "version": 2,
+                    "plugins": {
+                        "../../../outside.txt@hukuhaka-plugin": [
+                            {"scope": "user", "version": "0"}
+                        ]
+                    },
+                }
+            )
+        )
+        with self.assertRaises(StateError):
+            self.deployment().deploy()
+        self.assertEqual("keep\n", outside.read_text())
+
+    def test_a_symlinked_directory_inside_the_state_root_is_not_an_escape(self) -> None:
+        # Executable form of the reason containment stays lexical: swapping
+        # os.path.abspath() for Path.resolve() in ensure_within() breaks this.
+        shared = self.home / "plugins-shared"
+        shared.mkdir()
+        self.claude.mkdir(parents=True)
+        (self.claude / "plugins").symlink_to(shared, target_is_directory=True)
+        self.deployment().deploy()
+        self.assertTrue(self.manifest.exists())
+        self.assertTrue((self.claude / "CLAUDE.md").exists())
 
     def test_uninstall_does_not_create_missing_registries(self) -> None:
         self.claude.mkdir(parents=True)
@@ -212,6 +369,55 @@ class InstallerTestCase(unittest.TestCase):
         self.deployment(dry_run=True).deploy()
         self.assertFalse(self.claude.exists())
 
+    def test_dry_run_uninstall_does_not_contend_for_the_lock(self) -> None:
+        # InstallerLock.__enter__ mkdir()s the state root and writes a pid, so a
+        # dry run that takes it both creates state and dies against a real
+        # install already holding it. Reporting what --dry-run would remove must
+        # not need exclusive access to anything.
+        self.deployment().deploy()
+        with InstallerLock(self.claude):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.deployment(dry_run=True).uninstall(confirm=False)
+        self.assertIn("Dry run", output.getvalue())
+
+    def test_dry_run_reset_does_not_contend_for_the_lock(self) -> None:
+        # Over-correction guard: reset already avoided this with nullcontext and
+        # must keep avoiding it now that both paths share one manager.
+        self.deployment().deploy()
+        with InstallerLock(self.claude):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                self.deployment(dry_run=True).reset_for_install()
+        self.assertIn("[dry-run] rm", output.getvalue())
+
+    def leave_interrupted_transaction(self) -> None:
+        # Against the deployment's own state root: containment is lexical, and
+        # ClaudeDeployment resolves home, so a journal written through the
+        # unresolved spelling of the same directory would not compare equal.
+        state_root = self.deployment().claude_dir
+        transaction = FileTransaction(state_root)
+        transaction.__enter__()
+        transaction.write_bytes(state_root / "settings.json", b"interrupted\n")
+
+    def test_uninstall_reports_a_recovered_transaction(self) -> None:
+        # The count was discarded here, so an interrupted transaction was
+        # replayed with nothing said about it.
+        self.deployment().deploy()
+        self.leave_interrupted_transaction()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.deployment(force=True).uninstall(confirm=False)
+        self.assertIn("[recovered] 1 interrupted transaction(s)", output.getvalue())
+
+    def test_reset_reports_a_recovered_transaction(self) -> None:
+        self.deployment().deploy()
+        self.leave_interrupted_transaction()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.deployment(force=True).reset_for_install()
+        self.assertIn("[recovered] 1 interrupted transaction(s)", output.getvalue())
+
     def test_reset_preserves_template_and_rejects_modified_plugin(self) -> None:
         self.deployment().deploy()
         plugin = (
@@ -240,66 +446,275 @@ class InstallerTestCase(unittest.TestCase):
         self.assertFalse(self.manifest.exists())
 
 class InstallerSelectionTests(unittest.TestCase):
-    def installer(self, host: str = "claude", *selection: str) -> Installer:
+    def installer(self, *arguments: str) -> Installer:
         arguments = [
             "--repo-root",
             str(ROOT),
-            "--host",
-            host,
-            *selection,
+            "--local-source",
+            *arguments,
         ]
         args = build_parser().parse_args(arguments)
-        args.version_explicit = False
-        args.selector_used = not bool(selection)
         return Installer(args)
 
-    def test_no_tty_preserves_current_and_adds_supported_defaults(self) -> None:
-        installer = self.installer()
-        with mock.patch.object(
-            installer, "current_components", return_value={"agent-teams"}
-        ):
-            selected = installer.choose_components()
-
+    def test_recommended_selects_only_supported_catalog_defaults(self) -> None:
+        installer = self.installer(
+            "claude",
+            "install",
+            "--recommended",
+            "--yes",
+        )
         self.assertEqual(
             [
                 "hukuhaka-report-planner",
                 "hukuhaka-engineering-plan",
                 "hukuhaka-codex",
                 "claude-md",
-                "agent-teams",
             ],
-            selected,
+            installer._automation_components("claude"),
         )
-        self.assertFalse(installer.args.selector_used)
 
-    def test_explicit_selection_does_not_probe_tty(self) -> None:
+    def test_explicit_selection_is_the_complete_desired_state(self) -> None:
         installer = self.installer(
             "claude",
+            "install",
             "--components",
             "hukuhaka-engineering-plan",
         )
-        with mock.patch.object(installer, "current_components", return_value=set()), mock.patch.object(
-            installer, "_tty_available", side_effect=AssertionError("TTY probe was unexpected")
-        ):
-            self.assertEqual(["hukuhaka-engineering-plan"], installer.choose_components())
+        self.assertEqual(
+            ["hukuhaka-engineering-plan"],
+            installer._automation_components("claude"),
+        )
 
     def test_removed_legacy_components_are_unknown(self) -> None:
         for name in ("hukuhaka-ltm", "hukuhaka-project-mapper"):
-            installer = self.installer("claude", "--components", name)
-            with self.assertRaisesRegex(InstallerError, "unknown component '{}'".format(name)):
-                installer.choose_components()
+            installer = self.installer(
+                "claude", "install", "--components", name
+            )
+            with self.assertRaisesRegex(
+                InstallerError, "unknown .* component '{}'".format(name)
+            ):
+                installer._automation_components("claude")
 
     def test_declared_alias_resolves_to_current_component(self) -> None:
         installer = self.installer(
             "claude",
+            "install",
             "--components",
             "old-report-planner",
         )
         installer.aliases["old-report-planner"] = "hukuhaka-report-planner"
         self.assertEqual(
             ["hukuhaka-report-planner"],
-            installer.choose_components(),
+            installer._automation_components("claude"),
         )
+
+    def test_non_tty_without_a_host_command_is_rejected(self) -> None:
+        installer = self.installer()
+        with mock.patch.object(installer, "_tty_available", return_value=False):
+            self.assertEqual(2, installer.interactive())
+
+    def test_no_detected_host_exits_without_changes(self) -> None:
+        installer = self.installer()
+        with mock.patch.object(installer, "_tty_available", return_value=True), \
+             mock.patch("scripts.install.main.shutil.which", return_value=None):
+            self.assertEqual(1, installer.interactive())
+
+    def test_legacy_selection_flags_are_removed(self) -> None:
+        with self.assertRaises(SystemExit):
+            build_parser().parse_args(
+                ["--repo-root", str(ROOT), "--host", "both", "--all"]
+            )
+
+    def test_bootstrap_options_are_accepted_after_the_host_action(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--repo-root",
+                str(ROOT),
+                "claude",
+                "install",
+                "--recommended",
+                "--version=1.2.3",
+                "--source-dir=.",
+            ]
+        )
+        self.assertEqual("1.2.3", args.version)
+        self.assertEqual(".", args.source_dir)
+
+    def test_interactive_continues_to_codex_after_claude_failure(self) -> None:
+        installer = self.installer()
+        plans = [
+            HostInstallPlan("claude", ["claude-md"]),
+            HostInstallPlan("codex", ["agents-md"]),
+        ]
+        with mock.patch.object(installer, "_tty_available", return_value=True), \
+             mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
+             mock.patch.object(installer, "_current", return_value=set()), \
+             mock.patch.object(installer, "_host_version", return_value="test"), \
+             mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
+             mock.patch.object(installer, "_confirm", return_value=True), \
+             mock.patch.object(
+                 installer,
+                 "_apply_host",
+                 side_effect=[
+                     HostResult("claude", "failed", "injected"),
+                     HostResult("codex", "success"),
+                 ],
+             ) as apply_host:
+            self.assertEqual(1, installer.interactive())
+
+        self.assertEqual(2, apply_host.call_count)
+
+    def test_interactive_applies_config_before_codex_components_and_verifies(self) -> None:
+        installer = self.installer()
+        plans = [
+            HostInstallPlan(
+                "codex",
+                ["agents-md"],
+                reset=True,
+                configure_codex=True,
+            )
+        ]
+        config_plan = mock.Mock(changed=True)
+        config_editor = mock.Mock()
+        config_editor.inspect.return_value = {}
+        config_editor.plan.return_value = config_plan
+        events = []
+        config_editor.apply.side_effect = lambda *args, **kwargs: events.append(
+            "config"
+        )
+        config_editor.verify.side_effect = lambda *args, **kwargs: events.append(
+            "verify"
+        )
+
+        def apply_host(*args, **kwargs):
+            events.append("components")
+            return HostResult("codex", "success")
+
+        with mock.patch.object(installer, "_tty_available", return_value=True), \
+             mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
+             mock.patch.object(installer, "_current", return_value=set()), \
+             mock.patch.object(installer, "_host_version", return_value="test"), \
+             mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
+             mock.patch("scripts.install.main.prompt_settings", return_value={}), \
+             mock.patch(
+                 "scripts.install.main.CodexConfigEditor",
+                 return_value=config_editor,
+             ), \
+             mock.patch.object(installer, "_confirm", return_value=True), \
+             mock.patch.object(installer, "_apply_host", side_effect=apply_host), \
+             mock.patch.object(installer, "_print_results", return_value=0) as print_results:
+            self.assertEqual(0, installer.interactive())
+
+        self.assertEqual(["config", "components", "verify"], events)
+        result = print_results.call_args.args[0][0]
+        self.assertEqual("success", result.status)
+
+    def test_interactive_continues_components_after_config_failure(self) -> None:
+        installer = self.installer()
+        plans = [
+            HostInstallPlan(
+                "codex",
+                ["agents-md"],
+                configure_codex=True,
+            )
+        ]
+        config_plan = mock.Mock(changed=True)
+        config_editor = mock.Mock()
+        config_editor.inspect.return_value = {}
+        config_editor.plan.return_value = config_plan
+        config_editor.apply.side_effect = InstallerError("config failed")
+
+        with mock.patch.object(installer, "_tty_available", return_value=True), \
+             mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
+             mock.patch.object(installer, "_current", return_value=set()), \
+             mock.patch.object(installer, "_host_version", return_value="test"), \
+             mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
+             mock.patch("scripts.install.main.prompt_settings", return_value={}), \
+             mock.patch(
+                 "scripts.install.main.CodexConfigEditor",
+                 return_value=config_editor,
+             ), \
+             mock.patch.object(installer, "_confirm", return_value=True), \
+             mock.patch.object(
+                 installer,
+                 "_apply_host",
+                 return_value=HostResult("codex", "success"),
+             ) as apply_host, \
+             mock.patch.object(installer, "_print_results", return_value=1) as print_results:
+            self.assertEqual(1, installer.interactive())
+
+        apply_host.assert_called_once()
+        config_editor.verify.assert_not_called()
+        result = print_results.call_args.args[0][0]
+        self.assertEqual("partial", result.status)
+        self.assertIn("config failed", result.detail)
+
+    def test_interactive_keeps_config_when_codex_components_fail(self) -> None:
+        installer = self.installer()
+        plans = [
+            HostInstallPlan(
+                "codex",
+                ["agents-md"],
+                configure_codex=True,
+            )
+        ]
+        config_plan = mock.Mock(changed=True)
+        config_editor = mock.Mock()
+        config_editor.inspect.return_value = {}
+        config_editor.plan.return_value = config_plan
+
+        with mock.patch.object(installer, "_tty_available", return_value=True), \
+             mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
+             mock.patch.object(installer, "_current", return_value=set()), \
+             mock.patch.object(installer, "_host_version", return_value="test"), \
+             mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
+             mock.patch("scripts.install.main.prompt_settings", return_value={}), \
+             mock.patch(
+                 "scripts.install.main.CodexConfigEditor",
+                 return_value=config_editor,
+             ), \
+             mock.patch.object(installer, "_confirm", return_value=True), \
+             mock.patch.object(
+                 installer,
+                 "_apply_host",
+                 return_value=HostResult("codex", "failed", "components failed"),
+             ), \
+             mock.patch.object(installer, "_print_results", return_value=1) as print_results:
+            self.assertEqual(1, installer.interactive())
+
+        config_editor.apply.assert_called_once_with(config_plan, show_diff=False)
+        config_editor.verify.assert_called_once_with(config_plan)
+        result = print_results.call_args.args[0][0]
+        self.assertEqual("partial", result.status)
+        self.assertIn("components failed", result.detail)
+
+    def test_codex_result_reports_both_failures(self) -> None:
+        result = Installer._combine_codex_result(
+            HostResult("codex", "failed", "components failed"),
+            config_requested=True,
+            config_changed=True,
+            config_applied=False,
+            config_errors=["config failed"],
+        )
+
+        self.assertEqual("failed", result.status)
+        self.assertEqual(
+            "config failed\n    components failed",
+            result.detail,
+        )
+
+    def test_codex_result_is_partial_when_applied_config_fails_final_verify(
+        self,
+    ) -> None:
+        result = Installer._combine_codex_result(
+            HostResult("codex", "failed", "components failed"),
+            config_requested=True,
+            config_changed=True,
+            config_applied=True,
+            config_errors=["config verify failed"],
+        )
+
+        self.assertEqual("partial", result.status)
 
 
 class CodexGuidanceTests(unittest.TestCase):
@@ -335,6 +750,46 @@ class CodexGuidanceTests(unittest.TestCase):
         ).uninstall()
         self.assertEqual("# User\n", target.read_text())
 
+    def test_deploy_recovers_an_interrupted_codex_transaction(self) -> None:
+        self.deployment().deploy()
+        target = self.codex_home / "AGENTS.md"
+        deployed = target.read_bytes()
+        # Simulate a kill between the AGENTS.md write and the manifest write:
+        # the journal stays "pending" and the managed block no longer matches
+        # the recorded managedHash.
+        transaction = FileTransaction(self.codex_home)
+        transaction.__enter__()
+        transaction.write_bytes(target, b"interrupted\n")
+        self.deployment().deploy()
+        self.assertEqual(deployed, target.read_bytes())
+
+    def test_uninstall_recovers_before_guidance_manifest_noop_check(self) -> None:
+        self.deployment().deploy()
+        manifest = self.codex_home / ".hukuhaka-agents-manifest.json"
+        transaction = FileTransaction(self.codex_home)
+        transaction.__enter__()
+        transaction.remove(manifest)
+
+        self.deployment().uninstall()
+
+        self.assertFalse(manifest.exists())
+        target = self.codex_home / "AGENTS.md"
+        self.assertTrue(
+            not target.exists() or "# Managed" not in target.read_text()
+        )
+
+    def test_disabled_deploy_delegates_without_self_deadlock(self) -> None:
+        self.deployment().deploy()
+        target = self.codex_home / "AGENTS.md"
+        self.assertTrue(target.exists())
+        CodexGuidanceDeployment(
+            self.source,
+            self.codex_home,
+            "1.0.13",
+            enabled=False,
+        ).deploy()
+        self.assertFalse(target.exists())
+
     def test_modified_managed_block_requires_force(self) -> None:
         self.deployment().deploy()
         target = self.codex_home / "AGENTS.md"
@@ -346,7 +801,7 @@ class CodexGuidanceTests(unittest.TestCase):
 
 
 class PlainTerminalSelectionTests(unittest.TestCase):
-    def test_hosts_are_rendered_separately_with_reset_before_install(self) -> None:
+    def test_only_detected_hosts_are_rendered_and_reset_is_explicit(self) -> None:
         output = io.StringIO()
         plans = prompt_install_plan(
             io.StringIO(),
@@ -360,26 +815,72 @@ class PlainTerminalSelectionTests(unittest.TestCase):
                     "components": [{"name": "planner", "kind": "plugin"}],
                     "selected": {"planner"},
                 },
-                {
-                    "host": "codex",
-                    "label": "Codex",
-                    "available": False,
-                    "version": "",
-                    "components": [],
-                    "selected": set(),
-                },
             ],
-            keys=("down", "down", "toggle", "down", "down", "enter"),
+            keys=("down", "down", "down", "toggle", "down", "down", "enter"),
         )
 
         self.assertEqual(1, len(plans))
         self.assertEqual("claude", plans[0].host)
-        self.assertTrue(plans[0].reset_before_install)
-        self.assertFalse(plans[0].reset_templates)
+        self.assertTrue(plans[0].reset)
+        self.assertFalse(plans[0].include_template)
         rendered = output.getvalue()
         self.assertIn("Claude Code", rendered)
-        self.assertIn("Codex", rendered)
-        self.assertIn("unavailable", rendered)
+        self.assertNotIn("Codex", rendered)
+
+    def test_codex_global_config_is_opt_in(self) -> None:
+        output = io.StringIO()
+        plans = prompt_install_plan(
+            io.StringIO(),
+            output,
+            sections=[
+                {
+                    "host": "codex",
+                    "label": "Codex",
+                    "version": "0.145.0",
+                    "components": [
+                        {
+                            "name": "hukuhaka-report-planner",
+                            "kind": "plugin",
+                            "default": True,
+                            "lifecycle": "supported",
+                        }
+                    ],
+                    "selected": {"hukuhaka-report-planner"},
+                }
+            ],
+            keys=(
+                "down",
+                "down",
+                "down",
+                "toggle",
+                "down",
+                "down",
+                "down",
+                "enter",
+            ),
+        )
+
+        self.assertEqual(1, len(plans))
+        self.assertTrue(plans[0].configure_codex)
+        self.assertIn("Configure global Codex defaults", output.getvalue())
+
+    def test_enabled_host_with_no_components_is_an_exact_empty_state(self) -> None:
+        plans = prompt_install_plan(
+            io.StringIO(),
+            io.StringIO(),
+            sections=[
+                {
+                    "host": "claude",
+                    "label": "Claude Code",
+                    "components": [{"name": "planner", "kind": "plugin"}],
+                    "selected": {"planner"},
+                }
+            ],
+            keys=("down", "toggle", "down", "down", "down", "down", "enter"),
+        )
+
+        self.assertEqual(1, len(plans))
+        self.assertEqual([], plans[0].components)
 
 
 if __name__ == "__main__":

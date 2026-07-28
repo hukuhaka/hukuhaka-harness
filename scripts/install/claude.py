@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import filecmp
 import json
-from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,11 +13,12 @@ from .common import (
     DriftError,
     FileTransaction,
     InstallerError,
-    InstallerLock,
     Manifest,
     StateError,
+    installer_state,
     load_json,
     remove_path,
+    safe_join,
     sha256_file,
 )
 
@@ -130,6 +130,15 @@ class ClaudeDeployment:
             )
         return selected
 
+    def _claude_path(self, relative: str, *, operation: str) -> Path:
+        """Resolve a relative path that came from state we do not control.
+
+        The manifest and the plugin registry are both attacker-editable files.
+        Going through safe_join() keeps the root implicit, so a call site cannot
+        join the wrong one or forget the check.
+        """
+        return safe_join(self.claude_dir, relative, operation=operation)
+
     def _collect_tree(self, source_root: Path, destination_prefix: str) -> List[SourceFile]:
         result = []
         if not source_root.is_dir():
@@ -189,6 +198,14 @@ class ClaudeDeployment:
             for path in self.marketplace_root.iterdir():
                 if path.is_dir() and path.name != ".claude-plugin" and path.name not in plugin_names:
                     ghosts.add(path.name)
+        # Registry keys are attacker-editable and reach transaction.remove() in
+        # deploy(). Validate here so a poisoned key fails during planning --
+        # before the transaction opens, and on the dry-run path too.
+        for name in sorted(ghosts):
+            self._claude_path(
+                "plugins/{}/{}".format(self.marketplace_name, name),
+                operation="resolve-ghost-plugin",
+            )
         return ghosts
 
     def build_plan(self, manifest: Manifest) -> DeploymentPlan:
@@ -219,6 +236,11 @@ class ClaudeDeployment:
         new_relatives = {item.relative for item in files}
         new_relatives.add(self.marketplace_manifest_rel)
         stale = sorted(set(manifest.files) - new_relatives)
+        # _check_drift() cannot be the gate: it returns early under --force and
+        # for a manifest with no hashes. Validating here covers both, and fails
+        # before any file has been copied.
+        for relative in stale:
+            self._claude_path(relative, operation="plan-stale-file")
         dropped = sorted(
             name for name in manifest.components if name in plugin_names and name not in selected_set
         )
@@ -242,7 +264,7 @@ class ClaudeDeployment:
         touched = set(plan.stale_files) | set(source_by_relative)
         for relative in sorted(touched):
             recorded = manifest.hashes.get(relative)
-            target = self.claude_dir / relative
+            target = self._claude_path(relative, operation="check-managed-file-drift")
             if not recorded or not target.is_file():
                 continue
             current = sha256_file(target)
@@ -373,37 +395,47 @@ class ClaudeDeployment:
             print("hukuhaka-harness v{} (fresh install — plugins: {})".format(self.version, plugins))
         print("")
 
-    def deploy(self) -> None:
-        if self.dry_run:
-            manifest = Manifest.load(self.manifest_path)
-            plan = self.build_plan(manifest)
-            self._check_drift(manifest, plan)
-            settings, installed, known = self._load_registries()
-            self._update_registries(settings, installed, known, plan)
-            self._apply_agent_teams(settings, plan.agent_teams)
-            self._print_header(manifest, plan)
-            print("Deploying:")
-            if "hukuhaka-codex" in plan.components:
-                print(
-                    "  license: hukuhaka-codex is an Apache-2.0 derivative of "
-                    "openai/codex-plugin-cc (see plugin LICENSE and NOTICE)"
-                )
-            for item in plan.files:
-                print("  [dry-run] {}".format(item.relative))
-            print("  [dry-run] {}".format(self.marketplace_manifest_rel))
-            for relative in plan.stale_files:
-                print("  [dry-run] rm {}".format(relative))
-            print("  {} files".format(len(plan.files)))
-            print("  [dry-run] would update Claude registries and manifest")
-            print("")
-            print("Dry run complete. No files were modified.")
-            return
+    def current_components(self) -> Set[str]:
+        return set(Manifest.load(self.manifest_path).components)
 
-        self.claude_dir.mkdir(parents=True, exist_ok=True)
-        with InstallerLock(self.claude_dir):
-            recovered = FileTransaction.recover_pending(self.claude_dir)
-            if recovered:
-                print("  [recovered] {} interrupted transaction(s)".format(recovered))
+    def verify(self, expected: Sequence[str]) -> None:
+        manifest = Manifest.load(self.manifest_path)
+        if set(manifest.components) != set(expected):
+            raise InstallerError(
+                "Claude post-install manifest does not match the requested components",
+                host="claude",
+                stage="verify",
+            )
+        missing = [
+            relative
+            for relative in manifest.files
+            if not self._claude_path(relative, operation="verify-managed-file").is_file()
+        ]
+        changed = [
+            relative
+            for relative, digest in manifest.hashes.items()
+            if self._claude_path(relative, operation="verify-managed-file").is_file()
+            and sha256_file(
+                self._claude_path(relative, operation="verify-managed-file")
+            )
+            != digest
+        ]
+        if missing or changed:
+            raise InstallerError(
+                "Claude managed files failed verification: {}".format(
+                    ", ".join(sorted(set(missing + changed)))
+                ),
+                host="claude",
+                stage="verify",
+            )
+
+    def deploy(
+        self,
+        *,
+        reset: bool = False,
+        reset_template: bool = False,
+    ) -> None:
+        with installer_state(self.claude_dir, dry_run=self.dry_run) as writable:
             manifest = Manifest.load(self.manifest_path)
             plan = self.build_plan(manifest)
             self._check_drift(manifest, plan)
@@ -417,8 +449,43 @@ class ClaudeDeployment:
                     "  license: hukuhaka-codex is an Apache-2.0 derivative of "
                     "openai/codex-plugin-cc (see plugin LICENSE and NOTICE)"
                 )
+            if not writable:
+                for item in plan.files:
+                    print("  [dry-run] {}".format(item.relative))
+                print("  [dry-run] {}".format(self.marketplace_manifest_rel))
+                for relative in plan.stale_files:
+                    print("  [dry-run] rm {}".format(relative))
+                if reset:
+                    print("  [dry-run] reset managed plugins/skills")
+                    if reset_template:
+                        print("  [dry-run] reset managed CLAUDE.md")
+                print("  {} files".format(len(plan.files)))
+                print("  [dry-run] would update Claude registries and manifest")
+                print("")
+                print("Dry run complete. No files were modified.")
+                return
             added = updated = unchanged = removed = 0
             with FileTransaction(self.claude_dir) as transaction:
+                if reset:
+                    transaction.remove(self.marketplace_root)
+                    transaction.remove(
+                        self.claude_dir / "plugins" / "cache" / self.marketplace_name
+                    )
+                    managed_skills = {
+                        relative.split("/", 2)[1]
+                        for relative in manifest.files
+                        if relative.startswith("skills/")
+                        and len(relative.split("/", 2)) > 1
+                    }
+                    for name in sorted(managed_skills):
+                        transaction.remove(
+                            self._claude_path(
+                                "skills/{}".format(name),
+                                operation="reset-managed-skill",
+                            )
+                        )
+                    if reset_template:
+                        transaction.remove(self.claude_dir / "CLAUDE.md")
                 for item in plan.files:
                     target = self.claude_dir / item.relative
                     if not target.exists():
@@ -442,14 +509,29 @@ class ClaudeDeployment:
                     unchanged += 1
 
                 for relative in plan.stale_files:
-                    if transaction.remove(self.claude_dir / relative):
+                    if transaction.remove(
+                        self._claude_path(relative, operation="remove-stale-file")
+                    ):
                         removed += 1
                 legacy = self.claude_dir / "plugins" / "hukuhaka-project-mapper"
                 transaction.remove(legacy)
                 for plugin_name in sorted(set(plan.dropped_plugins) | set(plan.ghost_plugins)):
-                    transaction.remove(self.marketplace_root / plugin_name)
-                    transaction.remove(self.claude_dir / "plugins" / "cache" / self.marketplace_name / plugin_name)
+                    transaction.remove(
+                        self._claude_path(
+                            "plugins/{}/{}".format(self.marketplace_name, plugin_name),
+                            operation="remove-ghost-plugin",
+                        )
+                    )
+                    transaction.remove(
+                        self._claude_path(
+                            "plugins/cache/{}/{}".format(self.marketplace_name, plugin_name),
+                            operation="remove-ghost-plugin",
+                        )
+                    )
 
+                transaction.remove(
+                    self.claude_dir / "plugins" / "cache" / self.marketplace_name
+                )
                 self._write_registries(transaction, settings, installed, known)
                 all_files = sorted([item.relative for item in plan.files] + [self.marketplace_manifest_rel])
                 hashes = {
@@ -467,8 +549,7 @@ class ClaudeDeployment:
                 transaction.commit()
 
             cache = self.claude_dir / "plugins" / "cache" / self.marketplace_name
-            if cache.exists():
-                remove_path(cache)
+            if not cache.exists():
                 print("  [ok] cache invalidated")
             for root in (self.claude_dir / "plugins", self.claude_dir / "skills"):
                 if root.is_dir():
@@ -494,17 +575,16 @@ class ClaudeDeployment:
             print("  [ok] marketplace.json ({} plugin(s))".format(len(plan.selected_plugins)))
             print("")
             print("Deploy complete. v{}".format(self.version))
+        if not self.dry_run:
+            self.verify(self.selected_components())
 
     def reset_for_install(self, *, reset_template: bool = False) -> None:
         """Remove installer-owned plugins/skills before a clean reinstall."""
-        if not self.manifest_path.exists():
-            print("Claude Code: no managed installation to reset.")
-            return
-        lock = nullcontext() if self.dry_run else InstallerLock(self.claude_dir)
-        with lock:
-            if not self.dry_run:
-                FileTransaction.recover_pending(self.claude_dir)
+        with installer_state(self.claude_dir, dry_run=self.dry_run) as writable:
             manifest = Manifest.load(self.manifest_path)
+            if not manifest.components and not manifest.files:
+                print("Claude Code: no managed installation to reset.")
+                return
             remove_files = {
                 relative
                 for relative in manifest.files
@@ -513,10 +593,18 @@ class ClaudeDeployment:
                 or relative == self.marketplace_manifest_rel
                 or (reset_template and relative == "CLAUDE.md")
             }
+            # The startswith() filter above is not containment --
+            # "plugins/<mp>/../../../x" satisfies it. Resolve every entry now,
+            # before the drift check (which --force skips) and before the
+            # dry-run listing, so nothing is announced that will not happen.
+            remove_targets = {
+                relative: self._claude_path(relative, operation="reset-managed-file")
+                for relative in sorted(remove_files)
+            }
             if not self.force:
                 changed = []
                 for relative in sorted(remove_files):
-                    target = self.claude_dir / relative
+                    target = remove_targets[relative]
                     recorded = manifest.hashes.get(relative)
                     if recorded and target.is_file() and sha256_file(target) != recorded:
                         changed.append(relative)
@@ -569,13 +657,13 @@ class ClaudeDeployment:
                     removed_components.add(name)
 
             print("Resetting Claude Code:")
-            if self.dry_run:
+            if not writable:
                 for relative in sorted(remove_files):
                     print("  [dry-run] rm {}".format(relative))
                 return
             with FileTransaction(self.claude_dir) as transaction:
                 for relative in sorted(remove_files):
-                    transaction.remove(self.claude_dir / relative)
+                    transaction.remove(remove_targets[relative])
                 transaction.remove(self.marketplace_root)
                 transaction.remove(
                     self.claude_dir / "plugins" / "cache" / self.marketplace_name
@@ -609,17 +697,16 @@ class ClaudeDeployment:
             print("  [ok] managed plugins/skills reset")
 
     def uninstall(self, confirm: bool = True) -> None:
-        if not self.manifest_path.exists():
-            print("No manifest found — nothing to uninstall.")
-            return
         if confirm and not self.force and not self.dry_run:
             print("This will remove all hukuhaka-harness files from {}.".format(self.claude_dir))
             answer = input("Continue? [y/N] ")
             if answer.lower() != "y":
                 raise InstallerError("aborted", host="claude", stage="uninstall")
-        with InstallerLock(self.claude_dir):
-            FileTransaction.recover_pending(self.claude_dir)
+        with installer_state(self.claude_dir, dry_run=self.dry_run) as writable:
             manifest = Manifest.load(self.manifest_path)
+            if not manifest.components and not manifest.files:
+                print("No manifest found — nothing to uninstall.")
+                return
             settings, installed, known = self._load_registries()
             suffix = "@{}".format(self.marketplace_name)
             enabled = settings.get("enabledPlugins", {})
@@ -645,17 +732,23 @@ class ClaudeDeployment:
                     if key.endswith(suffix):
                         del plugins[key]
             known.pop(self.marketplace_name, None)
+            # uninstall applies no prefix filter at all, so every manifest entry
+            # is a deletion target. Resolve them all before anything is printed.
+            targets = [
+                (relative, self._claude_path(relative, operation="uninstall-managed-file"))
+                for relative in manifest.files
+            ]
             print("Uninstalling:")
-            if self.dry_run:
-                for relative in manifest.files:
-                    if (self.claude_dir / relative).exists():
+            if not writable:
+                for relative, target in targets:
+                    if target.exists():
                         print("  [dry-run] rm {}".format(relative))
                 print("Dry run — no files modified.")
                 return
             count = 0
             with FileTransaction(self.claude_dir) as transaction:
-                for relative in manifest.files:
-                    if transaction.remove(self.claude_dir / relative):
+                for relative, target in targets:
+                    if transaction.remove(target):
                         print("  [ok] rm {}".format(relative))
                         count += 1
                 transaction.remove(self.marketplace_root)
