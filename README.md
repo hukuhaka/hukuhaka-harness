@@ -14,8 +14,9 @@ imply that a Claude Code plugin is portable to Codex.
 
 | Component | Version | Status | Hosts | What it gives you |
 |-----------|---------|--------|-------|-------------------|
-| **hukuhaka-report-planner** | `0.5.0` | Supported | Claude Code, Codex | Researches visual-document requests and records a validated `spec.md`. Explicit plan requests stop there; artifact requests delegate construction and visual verification to one designer subagent. |
+| **hukuhaka-report-planner** | `0.5.1` | Supported | Claude Code, Codex | Researches visual-document requests and records a validated `spec.md`. Explicit plan requests stop there; artifact requests delegate construction and visual verification to one designer subagent. |
 | **hukuhaka-engineering-plan** | `0.1.0` | Supported | Claude Code, Codex | Produces repository-grounded implementation plans with explicit contracts, counterexample checks, and requirement-to-verification mapping. |
+| **hukuhaka-worklog** | `0.2.0` | Supported | Claude Code, Codex | Maintains current work in `.hukuhaka/work.md`, records completed or closed outcomes in `.hukuhaka/changelog.md`, and runs setup, status, and archive before model invocation. |
 | **hukuhaka-codex** | `0.4.0` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
 | **CLAUDE.md template** | — | Supported | Claude Code only | Shared scoped-change and verification policy with Claude-specific `spec.md` sign-off and attribution-free commits, deployed to `~/.claude/CLAUDE.md`. |
 | **AGENTS.md template** | — | Supported | Codex only | Codex policy for scoped change previews, evidence-backed verification, compact-resilient task state, and a safe local Git lifecycle, merged into `$CODEX_HOME/AGENTS.md`. |
@@ -92,7 +93,7 @@ For automation, `--recommended` selects supported catalog defaults and
 ```bash
 ./scripts/install.sh claude install --recommended --yes
 ./scripts/install.sh claude install \
-  --components hukuhaka-report-planner,hukuhaka-engineering-plan,hukuhaka-codex,claude-md \
+  --components hukuhaka-report-planner,hukuhaka-engineering-plan,hukuhaka-worklog,hukuhaka-codex,claude-md \
   --yes
 ./scripts/install.sh claude reset --recommended --include-template --yes
 ./scripts/install.sh claude uninstall --yes
@@ -125,13 +126,15 @@ The equivalent native Codex commands are:
 codex plugin marketplace add hukuhaka/hukuhaka-harness
 codex plugin add hukuhaka-report-planner@hukuhaka-harness
 codex plugin add hukuhaka-engineering-plan@hukuhaka-harness
+codex plugin add hukuhaka-worklog@hukuhaka-harness
 ```
 
 The Codex marketplace intentionally exposes only the components with native
-Codex packaging. Invoke the document planner as `$hukuhaka-report-planner` and
-the engineering planner as `$engineering-plan`, or let Codex select them from
-their descriptions. The `agents-md` template is installed by this repository's
-host-aware installer rather than the native plugin marketplace.
+Codex packaging. Invoke the document planner as `$hukuhaka-report-planner`, the
+engineering planner as `$engineering-plan`, and the worklog as `$worklog`, or
+let Codex select them from their descriptions. The `agents-md` template is
+installed by this repository's host-aware installer rather than the native
+plugin marketplace.
 
 ### Global Codex defaults
 
@@ -180,6 +183,24 @@ It inspects the repository before planning, defines observable behavior before
 file changes, challenges important invariants with concrete counterexamples,
 revises contradictions in the main plan, and ends with `Ready`,
 `Ready with assumptions`, or `Blocked`.
+
+## Worklog workflow
+
+The same lifecycle Skill and mechanical commands are packaged for both hosts:
+
+```text
+Claude Code: /hukuhaka-worklog:worklog <setup|status|archive>
+Codex:       $worklog <setup|status|archive>
+```
+
+The exact setup, status, and archive forms are intercepted by a
+`UserPromptSubmit` hook, run the bundled standard-library script, and stop
+before model invocation. Other requests use the model-invokable Skill, which
+decides whether work is planned, active, on hold, completed, or intentionally
+closed. Setup creates the host-neutral `.hukuhaka/{work,changelog}.md` files
+and adds a small managed awareness block to the current host's project
+instruction file (`CLAUDE.md` or `AGENTS.md`). It never reads or migrates a
+legacy `backlog.md`.
 
 ## Design principles
 

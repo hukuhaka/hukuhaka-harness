@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hukuhaka Worklog"
+  short_description: "Keep current work and decision history consistent"
+  default_prompt: "Use $worklog to record or update this project's work."

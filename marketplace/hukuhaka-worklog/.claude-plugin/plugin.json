@@ -1,0 +1,18 @@
+{
+  "name": "hukuhaka-worklog",
+  "version": "0.2.0",
+  "description": "Maintain current project work and durable completion or closure history in a shared host-neutral worklog.",
+  "author": {
+    "name": "hukuhaka"
+  },
+  "repository": "https://github.com/hukuhaka/hukuhaka-harness",
+  "license": "MIT",
+  "keywords": [
+    "worklog",
+    "planning",
+    "changelog",
+    "project-management"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/claude-codex-hooks.json"
+}

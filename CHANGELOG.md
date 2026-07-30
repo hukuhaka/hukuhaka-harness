@@ -7,6 +7,31 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.3] — 2026-07-30
+
+### Added
+
+- Added **`hukuhaka-worklog@0.2.0`** for Claude Code and Codex. Its
+  host-neutral files keep active work in `.hukuhaka/work.md` under
+  `In Progress`, `Planned`, and `On Hold`, while completed or intentionally
+  closed outcomes move to `.hukuhaka/changelog.md`. The model-invokable Skill
+  infers lifecycle changes from natural requests, grounds entries in inspected
+  evidence when applicable, and avoids imposing IDs, priorities, owners, or
+  schedules.
+- Exact setup, status, and archive commands run mechanically before model
+  invocation. Setup creates missing worklog files and adds a marker-owned
+  awareness block to `CLAUDE.md` or `AGENTS.md`; status validates and summarizes
+  the current structure; archive keeps the newest 10 history entries in
+  `Recent` and moves older entries to monthly files. Existing files are
+  preserved, and legacy `backlog.md` files are never read or migrated.
+
+### Changed
+
+- Expanded **`hukuhaka-report-planner@0.5.1`** with selectively loaded craft
+  guidance for maps, timelines, formulas, checklists, citations, imagery,
+  glossaries, and interactive disclosure. Existing Skill invocation, planning,
+  validation, and designer-handoff contracts are unchanged.
+
 ## [1.1.2] — 2026-07-28
 
 ### Added

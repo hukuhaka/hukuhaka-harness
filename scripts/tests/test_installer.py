@@ -467,6 +467,7 @@ class InstallerSelectionTests(unittest.TestCase):
             [
                 "hukuhaka-report-planner",
                 "hukuhaka-engineering-plan",
+                "hukuhaka-worklog",
                 "hukuhaka-codex",
                 "claude-md",
             ],

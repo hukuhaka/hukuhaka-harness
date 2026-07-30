@@ -12,11 +12,17 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PLANNER = ROOT / "marketplace" / "hukuhaka-report-planner"
+WORKLOG = ROOT / "marketplace" / "hukuhaka-worklog"
 CATALOG = ROOT / "components.json"
 CLAUDE_MANIFEST = PLANNER / ".claude-plugin" / "plugin.json"
 CODEX_MANIFEST = PLANNER / ".codex-plugin" / "plugin.json"
+WORKLOG_CLAUDE_MANIFEST = WORKLOG / ".claude-plugin" / "plugin.json"
+WORKLOG_CODEX_MANIFEST = WORKLOG / ".codex-plugin" / "plugin.json"
 MARKETPLACE = ROOT / ".agents" / "plugins" / "marketplace.json"
 SKILL = PLANNER / "skills" / "hukuhaka-report-planner" / "SKILL.md"
+WORKLOG_SKILL = WORKLOG / "skills" / "worklog" / "SKILL.md"
+WORKLOG_SCRIPT = WORKLOG / "skills" / "worklog" / "scripts" / "worklog.py"
+WORKLOG_HOOKS = WORKLOG / "hooks" / "claude-codex-hooks.json"
 DESIGNER_SKILL = PLANNER / "skills" / "artifact-designer" / "SKILL.md"
 DESIGNER_AGENT = PLANNER / "agents" / "artifact-designer.md"
 BUILD_HANDOFF = PLANNER / "skills" / "hukuhaka-report-planner" / "references" / "build-handoff.md"
@@ -45,8 +51,13 @@ def main() -> int:
         CATALOG,
         CLAUDE_MANIFEST,
         CODEX_MANIFEST,
+        WORKLOG_CLAUDE_MANIFEST,
+        WORKLOG_CODEX_MANIFEST,
         MARKETPLACE,
         SKILL,
+        WORKLOG_SKILL,
+        WORKLOG_SCRIPT,
+        WORKLOG_HOOKS,
         DESIGNER_SKILL,
         DESIGNER_AGENT,
         BUILD_HANDOFF,
@@ -59,9 +70,14 @@ def main() -> int:
 
     claude = load_json(CLAUDE_MANIFEST)
     codex = load_json(CODEX_MANIFEST)
+    worklog_claude = load_json(WORKLOG_CLAUDE_MANIFEST)
+    worklog_codex = load_json(WORKLOG_CODEX_MANIFEST)
     catalog = load_json(CATALOG)
     marketplace = load_json(MARKETPLACE)
     skill = SKILL.read_text(encoding="utf-8")
+    worklog_skill = WORKLOG_SKILL.read_text(encoding="utf-8")
+    worklog_script = WORKLOG_SCRIPT.read_text(encoding="utf-8")
+    worklog_hooks = load_json(WORKLOG_HOOKS)
     designer_skill = DESIGNER_SKILL.read_text(encoding="utf-8")
     designer_agent = DESIGNER_AGENT.read_text(encoding="utf-8")
     build_handoff = BUILD_HANDOFF.read_text(encoding="utf-8")
@@ -75,6 +91,20 @@ def main() -> int:
             "Claude manifest must rely on default agents/ discovery for current CLI compatibility", errors)
     require(codex.get("skills") == "./skills/", "Codex manifest must expose the shared ./skills/ tree", errors)
     require("agents" not in codex, "Codex manifest must not claim unsupported packaged agents", errors)
+    require(worklog_claude.get("name") == worklog_codex.get("name"),
+            "worklog Claude and Codex manifest names differ", errors)
+    require(worklog_claude.get("version") == worklog_codex.get("version"),
+            "worklog Claude and Codex manifest versions differ", errors)
+    require(worklog_claude.get("skills") == "./skills/",
+            "worklog Claude manifest must expose the shared ./skills/ tree", errors)
+    require(worklog_codex.get("skills") == "./skills/",
+            "worklog Codex manifest must expose the shared ./skills/ tree", errors)
+    require(worklog_claude.get("version") == "0.2.0",
+            "worklog plugin version must be 0.2.0", errors)
+    require(worklog_claude.get("hooks") == "./hooks/claude-codex-hooks.json",
+            "worklog Claude manifest must expose the mechanical hook", errors)
+    require(worklog_codex.get("hooks") == "./hooks/claude-codex-hooks.json",
+            "worklog Codex manifest must expose the mechanical hook", errors)
 
     catalog_check = subprocess.run(
         [
@@ -137,6 +167,59 @@ def main() -> int:
     require("do not build in the parent" in build_handoff.lower(),
             "build handoff permits same-context construction", errors)
 
+    worklog_frontmatter = re.match(r"^---\n(.*?)\n---", worklog_skill, re.DOTALL)
+    require(worklog_frontmatter is not None, "worklog skill has no frontmatter", errors)
+    if worklog_frontmatter:
+        header = worklog_frontmatter.group(1)
+        require(re.search(r"^name:\s*worklog\s*$", header, re.MULTILINE) is not None,
+                "worklog skill name is not portable", errors)
+        for key in ("allowed-tools:", "disable-model-invocation:", "argument-hint:"):
+            require(key not in header,
+                    f"worklog frontmatter contains Claude-only key: {key[:-1]}", errors)
+    require("${CLAUDE_PLUGIN_ROOT}" not in worklog_skill,
+            "worklog skill contains a Claude-only plugin-root variable", errors)
+    require("!`" not in worklog_skill,
+            "worklog skill contains Claude-only shell interpolation", errors)
+    require("references/writing-guide.md" not in worklog_skill,
+            "worklog skill still depends on the removed writing guide", errors)
+    require("Do not use for mechanical setup, status, or archive commands" in worklog_skill,
+            "worklog lifecycle trigger still claims mechanical commands", errors)
+    require(".hukuhaka/work.md" in worklog_skill,
+            "worklog host-neutral current-work path is missing", errors)
+    require(".hukuhaka/changelog.md" in worklog_skill,
+            "worklog host-neutral history path is missing", errors)
+    require("Never read, migrate, or write a legacy `backlog.md`" in worklog_skill,
+            "worklog legacy backlog exclusion is missing", errors)
+    require("write the changelog first" in worklog_skill,
+            "worklog completion ordering is missing", errors)
+    for contract in (
+        '"CLAUDE.md" if host == "claude" else "AGENTS.md"',
+        "hukuhaka-worklog:begin",
+        "Archive destinations are written first",
+        "def run_hook(",
+        '"PLUGIN_DATA" in environment',
+        '"decision": "block"',
+    ):
+        require(contract in worklog_script,
+                f"worklog mechanical contract is missing: {contract}", errors)
+    hook_groups = worklog_hooks.get("hooks", {})
+    require(set(hook_groups) == {"UserPromptSubmit"},
+            "worklog must register only a UserPromptSubmit hook", errors)
+    hook_entries = hook_groups.get("UserPromptSubmit", [])
+    require(len(hook_entries) == 1,
+            "worklog must register exactly one UserPromptSubmit group", errors)
+    if len(hook_entries) == 1:
+        handlers = hook_entries[0].get("hooks", [])
+        require(len(handlers) == 1,
+                "worklog must register exactly one command handler", errors)
+        if len(handlers) == 1:
+            require(
+                handlers[0].get("command")
+                == 'python3 "${CLAUDE_PLUGIN_ROOT}/skills/worklog/scripts/worklog.py" hook',
+                "worklog hook must invoke the bundled mechanical adapter directly",
+                errors,
+            )
+
     template_rules = (
         "For plans spanning multiple components or changing a contract",
         "The user’s latest explicit request defines the active scope",
@@ -171,10 +254,12 @@ def main() -> int:
                 f"README still exposes removed component: {removed_name}", errors)
     require("| Supported | Claude Code only |" in readme_row(readme, "hukuhaka-codex"),
             "README does not mark hukuhaka-codex Claude-only", errors)
+    require("| Supported | Claude Code, Codex |" in readme_row(readme, "hukuhaka-worklog"),
+            "README does not mark hukuhaka-worklog dual-host", errors)
 
     if errors:
         return report(errors)
-    print("host-support: report-planner dual-host contract and component lifecycle are consistent")
+    print("host-support: dual-host plugin contracts and component lifecycle are consistent")
     return 0
 
 

@@ -145,6 +145,7 @@ fi
             {
                 "hukuhaka-report-planner",
                 "hukuhaka-engineering-plan",
+                "hukuhaka-worklog",
                 "hukuhaka-codex",
                 "claude-md",
             },
@@ -171,6 +172,7 @@ fi
         )
         self.assertEqual(0, dry_run.returncode, dry_run.stderr)
         self.assertIn("plugin add hukuhaka-report-planner@hukuhaka-harness", dry_run.stdout)
+        self.assertIn("plugin add hukuhaka-worklog@hukuhaka-harness", dry_run.stdout)
         self.assertFalse((state / "marketplace").exists())
         self.assertEqual("", (state / "plugins").read_text(encoding="utf-8"))
 
@@ -180,7 +182,11 @@ fi
         self.assertEqual(0, first.returncode, first.stderr)
         self.assertEqual(0, second.returncode, second.stderr)
         self.assertEqual(
-            {"hukuhaka-report-planner", "hukuhaka-engineering-plan"},
+            {
+                "hukuhaka-report-planner",
+                "hukuhaka-engineering-plan",
+                "hukuhaka-worklog",
+            },
             set((state / "plugins").read_text(encoding="utf-8").splitlines()),
         )
         self.assertTrue((codex_home / ".hukuhaka-guidance-manifest.json").is_file())

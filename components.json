@@ -34,6 +34,20 @@
       }
     },
     {
+      "name": "hukuhaka-worklog",
+      "kind": "plugin",
+      "lifecycle": "supported",
+      "default": true,
+      "hosts": {
+        "claude": {
+          "manifest": "marketplace/hukuhaka-worklog/.claude-plugin/plugin.json"
+        },
+        "codex": {
+          "manifest": "marketplace/hukuhaka-worklog/.codex-plugin/plugin.json"
+        }
+      }
+    },
+    {
       "name": "hukuhaka-codex",
       "kind": "plugin",
       "lifecycle": "supported",
