@@ -118,12 +118,20 @@ def _render(
             component = state.components[component_index]
             checked = component["name"] in state.selected
             suffix = " — optional" if component.get("default") is not True else ""
+            descriptor = str(component["kind"])
+            version = component.get("version")
+            if (
+                component.get("kind") == "plugin"
+                and isinstance(version, str)
+                and version
+            ):
+                descriptor = "{} {}".format(descriptor, version)
             output.write(
                 "{}    [{}] {} ({}){}\n".format(
                     marker,
                     "x" if checked else " ",
                     component["name"],
-                    component["kind"],
+                    descriptor,
                     suffix,
                 )
             )

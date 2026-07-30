@@ -1,5 +1,5 @@
 ---
-role: optional vocabulary for testing or sharpening a reference-free design concept in Stage 1
+role: optional vocabulary for testing or sharpening a reference-free design concept in Stage 3
 relationship: an archetype names the LOOK (palette temperature, canvas, accent strategy,
   type class); the Document Model's `form` names the CANVAS (web document / deck / dashboard /
   print/PDF / poster / one-pager). They are orthogonal. Figure validity and implementation

@@ -398,6 +398,35 @@ class ClaudeDeployment:
     def current_components(self) -> Set[str]:
         return set(Manifest.load(self.manifest_path).components)
 
+    def current_component_state(self) -> Tuple[Set[str], Dict[str, str]]:
+        components = self.current_components()
+        installed_path = self.claude_dir / "plugins" / "installed_plugins.json"
+        installed = load_json(installed_path, {"version": 2, "plugins": {}})
+        if not isinstance(installed, dict) or not isinstance(
+            installed.get("plugins", {}), dict
+        ):
+            raise StateError(
+                "installed plugin registry must contain an object named plugins",
+                operation="read-registry",
+                path=str(installed_path),
+            )
+
+        suffix = "@{}".format(self.marketplace_name)
+        versions = {}  # type: Dict[str, str]
+        for key, entries in installed.get("plugins", {}).items():
+            if not isinstance(key, str) or not key.endswith(suffix):
+                continue
+            name = key[: -len(suffix)]
+            if (
+                isinstance(entries, list)
+                and entries
+                and isinstance(entries[0], dict)
+            ):
+                version = entries[0].get("version")
+                if isinstance(version, str) and version.strip():
+                    versions[name] = version.strip()
+        return components, versions
+
     def verify(self, expected: Sequence[str]) -> None:
         manifest = Manifest.load(self.manifest_path)
         if set(manifest.components) != set(expected):

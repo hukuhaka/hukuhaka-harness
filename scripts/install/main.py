@@ -32,6 +32,12 @@ class HostResult:
     detail: str = ""
 
 
+@dataclass(frozen=True)
+class HostComponentState:
+    components: Set[str]
+    plugin_versions: Mapping[str, str]
+
+
 class Installer:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
@@ -54,6 +60,7 @@ class Installer:
             for component in self.catalog["components"]
             for alias in component.get("aliases", [])
         }
+        self._target_version_cache = {}  # type: Dict[Tuple[str, str], str]
         self.version = args.resolved_version or self._source_version()
 
     def _source_version(self) -> str:
@@ -89,11 +96,51 @@ class Installer:
         return (result.stdout or result.stderr).strip().splitlines()[0][:80]
 
     def _components(self, host: str) -> List[Dict[str, Any]]:
-        return [
-            component
-            for component in self.catalog["components"]
-            if host in component.get("hosts", {})
-        ]
+        components = []
+        for component in self.catalog["components"]:
+            if host not in component.get("hosts", {}):
+                continue
+            item = dict(component)
+            version = self._target_plugin_version(host, str(component["name"]))
+            if version:
+                item["version"] = version
+            components.append(item)
+        return components
+
+    def _target_plugin_version(self, host: str, name: str) -> str:
+        component = self.component_map[name]
+        if component.get("kind") != "plugin":
+            return ""
+        key = (host, name)
+        if key in self._target_version_cache:
+            return self._target_version_cache[key]
+
+        host_data = component.get("hosts", {}).get(host, {})
+        manifest_value = (
+            host_data.get("manifest") if isinstance(host_data, dict) else None
+        )
+        if not isinstance(manifest_value, str) or not manifest_value:
+            raise StateError(
+                "{} plugin manifest path is missing for {}".format(host, name),
+                operation="read-plugin-manifest",
+                path=str(self.repo_root / "components.json"),
+            )
+        path = self.repo_root / manifest_value
+        metadata = load_json(path, {})
+        version = metadata.get("version") if isinstance(metadata, dict) else None
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("name") != name
+            or not isinstance(version, str)
+            or not version.strip()
+        ):
+            raise StateError(
+                "invalid plugin manifest for {}".format(name),
+                operation="read-plugin-manifest",
+                path=str(path),
+            )
+        self._target_version_cache[key] = version.strip()
+        return version.strip()
 
     def _recommended(self, host: str) -> List[str]:
         return [
@@ -156,10 +203,55 @@ class Installer:
             force=bool(getattr(self.args, "force", False)),
         )
 
+    def _current_state(self, host: str) -> HostComponentState:
+        if host == "claude":
+            components, versions = self._claude([]).current_component_state()
+        else:
+            components, versions = self._codex().current_component_state()
+
+        normalized = {}  # type: Dict[str, str]
+        for name, version in sorted(
+            versions.items(),
+            key=lambda item: (
+                item[0] != self.aliases.get(item[0], item[0]),
+                item[0],
+            ),
+        ):
+            canonical = self.aliases.get(name, name)
+            normalized.setdefault(canonical, version)
+        normalized_components = {
+            self.aliases.get(name, name) for name in components
+        }
+        return HostComponentState(normalized_components, normalized)
+
     def _current(self, host: str) -> Set[str]:
         if host == "claude":
             return self._claude([]).current_components()
         return self._codex().current_components()
+
+    def _version_summary(
+        self,
+        plan: HostInstallPlan,
+        before: Set[str],
+        installed_versions: Mapping[str, str],
+    ) -> List[Tuple[str, str]]:
+        summary = []
+        for name in plan.components:
+            target = self._target_plugin_version(plan.host, name)
+            if not target:
+                continue
+            if name not in before:
+                detail = "not installed → {}".format(target)
+            else:
+                installed = installed_versions.get(name)
+                if not installed:
+                    detail = "unknown → {}".format(target)
+                elif installed == target:
+                    detail = "{} (same version)".format(target)
+                else:
+                    detail = "{} → {}".format(installed, target)
+            summary.append((name, detail))
+        return summary
 
     def _print_detection(self, detected: Mapping[str, bool]) -> None:
         print("Hukuhaka Installer")
@@ -176,6 +268,7 @@ class Installer:
         self,
         plans: Sequence[HostInstallPlan],
         current: Mapping[str, Set[str]],
+        installed_versions: Mapping[str, Mapping[str, str]],
         config_plan: Optional[ConfigPlan],
     ) -> None:
         print("Installation plan")
@@ -189,6 +282,20 @@ class Installer:
                     csv_value(plan.components) or "none"
                 )
             )
+            version_summary = self._version_summary(
+                plan,
+                before,
+                installed_versions.get(plan.host, {}),
+            )
+            if version_summary:
+                width = max(len(name) for name, _ in version_summary)
+                print("  Component versions:")
+                for name, detail in version_summary:
+                    print("    {name:<{width}}  {detail}".format(
+                        name=name,
+                        width=width,
+                        detail=detail,
+                    ))
             print(
                 "  Remove:         {}".format(
                     csv_value(sorted(before - desired)) or "none"
@@ -320,18 +427,20 @@ class Installer:
 
         sections = []
         current = {}  # type: Dict[str, Set[str]]
+        installed_versions = {}  # type: Dict[str, Mapping[str, str]]
         for host in ("claude", "codex"):
             if not detected[host]:
                 continue
-            installed = self._current(host)
-            current[host] = installed
+            state = self._current_state(host)
+            current[host] = state.components
+            installed_versions[host] = state.plugin_versions
             sections.append(
                 {
                     "host": host,
                     "label": HOST_LABELS[host],
                     "version": self._host_version(host),
                     "components": self._components(host),
-                    "selected": installed or set(self._recommended(host)),
+                    "selected": state.components or set(self._recommended(host)),
                 }
             )
 
@@ -350,7 +459,7 @@ class Installer:
             settings = prompt_settings(config_editor.inspect())
             config_plan = config_editor.plan(settings)
 
-        self._print_plan(plans, current, config_plan)
+        self._print_plan(plans, current, installed_versions, config_plan)
         if not self._confirm():
             print("Exit. No changes were made.")
             return 0
@@ -472,14 +581,16 @@ class Installer:
             return self._print_results([result], dry_run=self.args.dry_run)
 
         components = self._automation_components(host)
-        current = {host: self._current(host)}
+        state = self._current_state(host)
+        current = {host: state.components}
+        installed_versions = {host: state.plugin_versions}
         plan = HostInstallPlan(
             host=host,
             components=components,
             reset=self.args.action == "reset",
             include_template=bool(getattr(self.args, "include_template", False)),
         )
-        self._print_plan([plan], current, None)
+        self._print_plan([plan], current, installed_versions, None)
         if not self._confirm():
             print("Exit. No changes were made.")
             return 0

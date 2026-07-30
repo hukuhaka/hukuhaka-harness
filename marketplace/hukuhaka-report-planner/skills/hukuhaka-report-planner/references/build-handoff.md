@@ -1,6 +1,6 @@
 # Build handoff
 
-Use this contract only after Stage 2 validates the final `spec.md` and the invocation mode is
+Use this contract only after Stage 4 finalizes `spec.md` and the invocation mode is
 `build-preflight`. Planning-only requests stop at the spec.
 
 ## Delegation payload
@@ -10,7 +10,6 @@ Send one designer all of the following:
 ```yaml
 spec path: .hukuhaka/reports/<short-name>/spec.md
 source material: <paths and verified URLs named by the spec>
-design source: <explicit DESIGN.md path or none>
 craft references: <the spec's selected references as absolute paths, or none>
 form: <Document Model form>
 output target: <user-requested path or build destination>
@@ -30,7 +29,8 @@ planner-relative paths.
 
 Delegate to the plugin subagent `hukuhaka-report-planner:artifact-designer`. The plugin agent
 preloads the portable `artifact-designer` skill and inherits the session's available build and
-rendering tools.
+rendering tools. Run this delegation in the foreground: do not set `run_in_background`, return
+early, or leave the designer running after the planner's final response.
 
 ### Codex
 
@@ -40,8 +40,9 @@ delegation payload above. Do not create or install a user-level `.codex/agents/`
 
 ## Completion
 
-- Wait for the designer to finish; do not build in the parent or run a competing builder.
-- Check that the returned receipt names artifact paths, direct visual inspection coverage, and
-  every acceptance-test result.
+- Wait for the designer to finish in the foreground; do not build in the parent, run a
+  competing builder, or return before the receipt arrives.
+- Check that the returned receipt names artifact paths, direct visual inspection coverage,
+  every acceptance-test result, and any construction-brief deviation.
 - If the host cannot spawn a write-capable subagent or the designer skill is unavailable, stop
   and report the missing surface. Do not silently fall back to same-context construction.

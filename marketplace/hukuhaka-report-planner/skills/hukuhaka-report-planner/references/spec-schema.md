@@ -6,12 +6,12 @@ This skill produces one planning artifact at
 .hukuhaka/reports/<short-name>/spec.md
 ```
 
-An explicit plan request stops here. An immediate artifact request uses this validated file
+An explicit plan request stops here. An immediate artifact request uses this finalized file
 as a preflight contract and delegates construction through `references/build-handoff.md`.
 
-`<short-name>` is derived in Stage 2 from the subject: lowercase kebab-case, at most 24
-characters. Stage 0 creates `.hukuhaka/reports/tmp-draft/spec.md`; Stage 2 renames the
-directory and validates the complete file.
+`<short-name>` is derived in Stage 4 from the subject: lowercase kebab-case, at most 24
+characters. Stage 1 creates `.hukuhaka/reports/tmp-draft/spec.md`; Stage 4 renames the
+directory and finalizes the complete file.
 
 `.claude/reports/<short-name>/spec.md` is a read-only compatibility fallback for plans
 created before `0.4.0`. New and updated specs are written only to `.hukuhaka/reports/`;
@@ -61,6 +61,9 @@ the planner does not dual-write, delete, or silently migrate legacy files.
 - reader question: <question answered>
 - evidence: <S1, fields/range, or explicit qualitative material>
 - selected form: <chart | table | diagram | screenshot | code | checklist | quote | ...>
+- material: <exact source slice, fields, path + symbol + current line range, states, or labels>
+- composition: <dominant relationship, arrangement, reading order, and intentional omissions>
+- treatment: <static/animated/interactive behavior, emphasis, annotation, and fallbacks>
 - takeaway: <what the reader should see>
 - caveat: <uncertainty or validity condition, or none>
 
@@ -94,12 +97,16 @@ the planner does not dual-write, delete, or silently migrate legacy files.
 
 - The complete spec contains all seven level-two blocks in the order above.
 - Every unit has a reader question, reader outcome, evidence, and an anchor or `prose`.
-- Every non-prose anchor has evidence, selected form, takeaway, and caveat.
+- Every non-prose anchor has evidence, selected form, takeaway, caveat, and a construction
+  brief that covers material, composition, and treatment. A small anchor may combine those
+  meanings into one or two concise lines instead of preserving exact field syntax.
 - A prose-only document uses `- none:` in Anchors and explains why.
-- Design Direction starts without reference names, then records zero to three selected
-  references, including an explicitly supplied `DESIGN.md` path when applicable, and the
-  borrow/transform/reject decisions.
+- Design Direction starts without reference names, then records zero to three selected craft
+  references and the borrow/transform/reject decisions.
 - Build Contract guides visual language without specifying CSS tokens or fixed components.
-- `validate-spec.sh` is required before handoff. It checks structure, not semantic or visual
-  quality; recorded acceptance tests still have to be run against the finished artifact.
+- This file is a planner/designer contract shape, not an executable schema. Stage 4 finalizes
+  it through semantic self-review; recorded acceptance tests still have to be run against the
+  finished artifact.
 - Build-preflight delegates one designer and keeps `spec.md` read-only during construction.
+- Existing specs remain readable. Before building from one that lacks construction briefs,
+  return through Stages 3 and 4 instead of asking the designer to invent missing direction.

@@ -501,13 +501,37 @@ class CodexInstaller:
             print("  [ok] {}@{}".format(component, self.marketplace))
 
     def current_components(self) -> Set[str]:
+        components, _ = self.current_component_state()
+        return components
+
+    def current_component_state(self) -> Tuple[Set[str], Dict[str, str]]:
+        plugins = self._plugins()
         names = {
             self.aliases.get(str(plugin["name"]), str(plugin["name"]))
-            for plugin in self._plugins()
+            for plugin in plugins
         }
+        versions = {}  # type: Dict[str, str]
+        for plugin in sorted(
+            plugins,
+            key=lambda item: (
+                str(item["name"]) != self.aliases.get(
+                    str(item["name"]), str(item["name"])
+                ),
+                str(item["name"]),
+            ),
+        ):
+            name = str(plugin["name"])
+            canonical = self.aliases.get(name, name)
+            version = plugin.get("version")
+            if (
+                canonical not in versions
+                and isinstance(version, str)
+                and version.strip()
+            ):
+                versions[canonical] = version.strip()
         if (self.codex_home / GUIDANCE_MANIFEST).is_file():
             names.add("agents-md")
-        return names
+        return names, versions
 
     def _remove_plugin(self, plugin: Mapping[str, Any], *, stage: str) -> None:
         plugin_id = str(plugin.get("pluginId", ""))

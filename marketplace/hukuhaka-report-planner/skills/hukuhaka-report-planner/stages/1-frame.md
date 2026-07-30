@@ -1,5 +1,5 @@
 ---
-stage: 0
+stage: 1
 purpose: discover the document job, reading behavior, form, audience, success test, source material, and evidence gaps
 prereq: user issued a visual-document planning or build request
 deliverable: .hukuhaka/reports/tmp-draft/spec.md created with Document Model and an initial Evidence block
@@ -45,7 +45,7 @@ open craft references in this stage.
 
 - `references/spec-schema.md` — Document Model and Evidence block shapes
 
-## Output (commit before Stage 1)
+## Output (complete before Stage 2)
 
 ```
 DOCUMENT MODEL: <job> · <reading behavior> · <form>
@@ -61,4 +61,4 @@ SPEC: .hukuhaka/reports/tmp-draft/spec.md created
 - Treating `report`, `deck`, or `dashboard` as the reader's job.
 - Guessing evidence from memory or generated docs.
 - Choosing a design style before understanding the document model.
-- Skipping the draft write; Stage 1 re-reads it.
+- Skipping the draft write; Stage 2 re-reads it.

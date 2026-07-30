@@ -7,6 +7,26 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.4] — 2026-07-30
+
+### Changed
+
+- Reworked **`hukuhaka-report-planner@0.6.0`** into four planning stages:
+  frame, structure, direct, and lock. The new direction stage gives each
+  non-prose anchor a source-backed construction brief covering its material,
+  composition, and static, animated, or interactive treatment before one
+  designer builds it.
+- The installer now shows each plugin's target version in the interactive
+  selector and compares registered and target versions in the confirmation
+  plan. Template and feature components remain unversioned, and matching
+  versions still follow the normal reinstall and verification path.
+
+### Removed
+
+- Removed the structural spec validator and special external `DESIGN.md`
+  handoff. Final plans now close through a designer-view self-review, while
+  actual artifacts still require direct visual inspection and human acceptance.
+
 ## [1.1.3] — 2026-07-30
 
 ### Added

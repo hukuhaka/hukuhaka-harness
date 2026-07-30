@@ -9,8 +9,9 @@ style_risk: treating this map as a mandatory reading list recreates a fixed visu
 
 - Start from `../reference-index.md`, not this directory. Select zero to three files that
   answer a specific unresolved problem; do not read the whole set in one pass.
-- In Stage 1, use the selected file to test an anchor's evidence, form, takeaway, and caveat.
-- During build-preflight continuation, use only the references recorded in the validated
+- In Stage 3, use the selected file to test an anchor's evidence, form, construction brief,
+  takeaway, and caveat.
+- During build-preflight continuation, use only the references recorded in the finalized
   spec unless a newly discovered implementation constraint requires another source.
 
 ## Routing

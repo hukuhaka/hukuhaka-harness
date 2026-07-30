@@ -17,7 +17,12 @@ from scripts.install.common import (
     InstallerLock,
     StateError,
 )
-from scripts.install.main import HostResult, Installer, build_parser
+from scripts.install.main import (
+    HostComponentState,
+    HostResult,
+    Installer,
+    build_parser,
+)
 from scripts.install.terminal import HostInstallPlan, prompt_install_plan
 
 
@@ -381,6 +386,36 @@ class InstallerTestCase(unittest.TestCase):
                 self.deployment(dry_run=True).uninstall(confirm=False)
         self.assertIn("Dry run", output.getvalue())
 
+    def test_current_component_state_reads_plugin_versions(self) -> None:
+        deployment = ClaudeDeployment(
+            ROOT,
+            self.home,
+            ["hukuhaka-worklog"],
+        )
+        deployment.deploy()
+
+        components, versions = deployment.current_component_state()
+
+        self.assertEqual({"hukuhaka-worklog"}, components)
+        self.assertEqual("0.2.0", versions["hukuhaka-worklog"])
+
+    def test_current_component_state_treats_missing_version_as_unknown(self) -> None:
+        deployment = ClaudeDeployment(
+            ROOT,
+            self.home,
+            ["hukuhaka-worklog"],
+        )
+        deployment.deploy()
+        registry = self.claude / "plugins" / "installed_plugins.json"
+        data = json.loads(registry.read_text())
+        del data["plugins"]["hukuhaka-worklog@hukuhaka-plugin"][0]["version"]
+        registry.write_text(json.dumps(data))
+
+        components, versions = deployment.current_component_state()
+
+        self.assertEqual({"hukuhaka-worklog"}, components)
+        self.assertNotIn("hukuhaka-worklog", versions)
+
     def test_dry_run_reset_does_not_contend_for_the_lock(self) -> None:
         # Over-correction guard: reset already avoided this with nullcontext and
         # must keep avoiding it now that both paths share one manager.
@@ -509,6 +544,158 @@ class InstallerSelectionTests(unittest.TestCase):
             installer._automation_components("claude"),
         )
 
+    def test_version_summary_covers_install_change_same_and_unknown(self) -> None:
+        installer = self.installer(
+            "claude",
+            "install",
+            "--recommended",
+            "--yes",
+        )
+        plan = HostInstallPlan(
+            "claude",
+            [
+                "hukuhaka-report-planner",
+                "hukuhaka-engineering-plan",
+                "hukuhaka-worklog",
+                "hukuhaka-codex",
+                "claude-md",
+            ],
+        )
+
+        summary = dict(
+            installer._version_summary(
+                plan,
+                {
+                    "hukuhaka-engineering-plan",
+                    "hukuhaka-worklog",
+                    "hukuhaka-codex",
+                },
+                {
+                    "hukuhaka-engineering-plan": "0.0.9",
+                    "hukuhaka-worklog": "0.2.0",
+                },
+            )
+        )
+
+        self.assertEqual(
+            "not installed → 0.6.0",
+            summary["hukuhaka-report-planner"],
+        )
+        self.assertEqual(
+            "0.0.9 → 0.1.0",
+            summary["hukuhaka-engineering-plan"],
+        )
+        self.assertEqual(
+            "0.2.0 (same version)",
+            summary["hukuhaka-worklog"],
+        )
+        self.assertEqual(
+            "unknown → 0.4.0",
+            summary["hukuhaka-codex"],
+        )
+        self.assertNotIn("claude-md", summary)
+
+    def test_target_version_rejects_invalid_plugin_manifest(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hukuhaka target version ") as tmp:
+            root = Path(tmp)
+            (root / "VERSION").write_text("1.0.0\n")
+            (root / "plugin.json").write_text(
+                json.dumps({"name": "wrong-name", "version": "1.2.3"})
+            )
+            (root / "components.json").write_text(
+                json.dumps(
+                    {
+                        "components": [
+                            {
+                                "name": "planner",
+                                "kind": "plugin",
+                                "hosts": {
+                                    "claude": {"manifest": "plugin.json"}
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+            args = build_parser().parse_args(
+                [
+                    "--repo-root",
+                    str(root),
+                    "claude",
+                    "install",
+                    "--recommended",
+                    "--yes",
+                ]
+            )
+            installer = Installer(args)
+
+            with self.assertRaisesRegex(
+                StateError, "invalid plugin manifest for planner"
+            ):
+                installer._components("claude")
+
+    def test_target_version_rejects_missing_plugin_version(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="hukuhaka target version ") as tmp:
+            root = Path(tmp)
+            (root / "VERSION").write_text("1.0.0\n")
+            (root / "plugin.json").write_text(json.dumps({"name": "planner"}))
+            (root / "components.json").write_text(
+                json.dumps(
+                    {
+                        "components": [
+                            {
+                                "name": "planner",
+                                "kind": "plugin",
+                                "hosts": {
+                                    "claude": {"manifest": "plugin.json"}
+                                },
+                            }
+                        ]
+                    }
+                )
+            )
+            args = build_parser().parse_args(
+                [
+                    "--repo-root",
+                    str(root),
+                    "claude",
+                    "install",
+                    "--recommended",
+                    "--yes",
+                ]
+            )
+            installer = Installer(args)
+
+            with self.assertRaisesRegex(
+                StateError, "invalid plugin manifest for planner"
+            ):
+                installer._components("claude")
+
+    def test_codex_component_state_reads_versions_and_normalizes_alias(self) -> None:
+        installer = self.installer(
+            "codex",
+            "install",
+            "--recommended",
+            "--yes",
+        )
+        with tempfile.TemporaryDirectory(prefix="hukuhaka codex state ") as tmp:
+            with mock.patch.dict("os.environ", {"CODEX_HOME": tmp}):
+                adapter = installer._codex()
+                adapter.aliases["old-worklog"] = "hukuhaka-worklog"
+                plugins = [
+                    {
+                        "name": "old-worklog",
+                        "version": "0.1.0",
+                        "marketplaceName": adapter.marketplace,
+                    }
+                ]
+
+                with mock.patch.object(adapter, "_plugins", return_value=plugins):
+                    components, versions = adapter.current_component_state()
+
+        self.assertEqual({"hukuhaka-worklog"}, components)
+        self.assertEqual("0.1.0", versions["hukuhaka-worklog"])
+
     def test_non_tty_without_a_host_command_is_rejected(self) -> None:
         installer = self.installer()
         with mock.patch.object(installer, "_tty_available", return_value=False):
@@ -549,7 +736,11 @@ class InstallerSelectionTests(unittest.TestCase):
         ]
         with mock.patch.object(installer, "_tty_available", return_value=True), \
              mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
-             mock.patch.object(installer, "_current", return_value=set()), \
+             mock.patch.object(
+                 installer,
+                 "_current_state",
+                 return_value=HostComponentState(set(), {}),
+             ), \
              mock.patch.object(installer, "_host_version", return_value="test"), \
              mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
              mock.patch.object(installer, "_confirm", return_value=True), \
@@ -593,7 +784,11 @@ class InstallerSelectionTests(unittest.TestCase):
 
         with mock.patch.object(installer, "_tty_available", return_value=True), \
              mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
-             mock.patch.object(installer, "_current", return_value=set()), \
+             mock.patch.object(
+                 installer,
+                 "_current_state",
+                 return_value=HostComponentState(set(), {}),
+             ), \
              mock.patch.object(installer, "_host_version", return_value="test"), \
              mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
              mock.patch("scripts.install.main.prompt_settings", return_value={}), \
@@ -627,7 +822,11 @@ class InstallerSelectionTests(unittest.TestCase):
 
         with mock.patch.object(installer, "_tty_available", return_value=True), \
              mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
-             mock.patch.object(installer, "_current", return_value=set()), \
+             mock.patch.object(
+                 installer,
+                 "_current_state",
+                 return_value=HostComponentState(set(), {}),
+             ), \
              mock.patch.object(installer, "_host_version", return_value="test"), \
              mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
              mock.patch("scripts.install.main.prompt_settings", return_value={}), \
@@ -666,7 +865,11 @@ class InstallerSelectionTests(unittest.TestCase):
 
         with mock.patch.object(installer, "_tty_available", return_value=True), \
              mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
-             mock.patch.object(installer, "_current", return_value=set()), \
+             mock.patch.object(
+                 installer,
+                 "_current_state",
+                 return_value=HostComponentState(set(), {}),
+             ), \
              mock.patch.object(installer, "_host_version", return_value="test"), \
              mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
              mock.patch("scripts.install.main.prompt_settings", return_value={}), \
@@ -802,6 +1005,40 @@ class CodexGuidanceTests(unittest.TestCase):
 
 
 class PlainTerminalSelectionTests(unittest.TestCase):
+    def test_plugin_rows_show_target_versions_only(self) -> None:
+        output = io.StringIO()
+        prompt_install_plan(
+            io.StringIO(),
+            output,
+            sections=[
+                {
+                    "host": "codex",
+                    "label": "Codex",
+                    "version": "0.145.0",
+                    "components": [
+                        {
+                            "name": "hukuhaka-worklog",
+                            "kind": "plugin",
+                            "version": "0.2.0",
+                            "default": True,
+                        },
+                        {
+                            "name": "agents-md",
+                            "kind": "template",
+                            "default": True,
+                        },
+                    ],
+                    "selected": {"hukuhaka-worklog", "agents-md"},
+                }
+            ],
+            keys=("exit",),
+        )
+
+        rendered = output.getvalue()
+        self.assertIn("hukuhaka-worklog (plugin 0.2.0)", rendered)
+        self.assertIn("agents-md (template)", rendered)
+        self.assertNotIn("agents-md (template ", rendered)
+
     def test_only_detected_hosts_are_rendered_and_reset_is_explicit(self) -> None:
         output = io.StringIO()
         plans = prompt_install_plan(

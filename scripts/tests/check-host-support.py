@@ -157,7 +157,7 @@ def main() -> int:
     require("Never dual-write" in skill, "dual-write prohibition is missing", errors)
     require("artifact-designer" in skill, "report-planner does not route build-preflight to artifact-designer", errors)
     require("name: artifact-designer" in designer_skill, "portable artifact-designer skill is malformed", errors)
-    require("Do not edit `spec.md`" in designer_skill, "designer can rewrite the validated spec", errors)
+    require("Do not edit `spec.md`" in designer_skill, "designer can rewrite the finalized spec", errors)
     require("skills:\n  - artifact-designer" in designer_agent,
             "Claude designer agent does not preload the portable skill", errors)
     require("Claude Code" in build_handoff and "Codex" in build_handoff,

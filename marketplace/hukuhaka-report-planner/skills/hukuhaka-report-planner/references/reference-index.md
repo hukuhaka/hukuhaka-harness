@@ -44,8 +44,6 @@ rejected mechanism:
 clone risk:
 ```
 
-An external style target is off by default. When the user explicitly supplies a `DESIGN.md`,
-record its path in Design Direction after forming the reference-free concept. Read its
-frontmatter and overview first, then only the sections that resolve a named design problem.
-Record what must not transfer; do not copy trademarks, proprietary assets, or irrelevant
-website chrome into the artifact plan.
+Selected references are bundled craft knowledge, not style targets or templates. They resolve
+named representation problems without supplying an artifact's identity, layout, or full
+visual system.

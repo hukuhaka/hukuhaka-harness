@@ -14,7 +14,7 @@ imply that a Claude Code plugin is portable to Codex.
 
 | Component | Version | Status | Hosts | What it gives you |
 |-----------|---------|--------|-------|-------------------|
-| **hukuhaka-report-planner** | `0.5.1` | Supported | Claude Code, Codex | Researches visual-document requests and records a validated `spec.md`. Explicit plan requests stop there; artifact requests delegate construction and visual verification to one designer subagent. |
+| **hukuhaka-report-planner** | `0.6.0` | Supported | Claude Code, Codex | Frames and structures visual-document requests, directs source-backed anchor construction, and records a finalized `spec.md`. Explicit plan requests stop there; artifact requests delegate construction and visual verification to one designer subagent. |
 | **hukuhaka-engineering-plan** | `0.1.0` | Supported | Claude Code, Codex | Produces repository-grounded implementation plans with explicit contracts, counterexample checks, and requirement-to-verification mapping. |
 | **hukuhaka-worklog** | `0.2.0` | Supported | Claude Code, Codex | Maintains current work in `.hukuhaka/work.md`, records completed or closed outcomes in `.hukuhaka/changelog.md`, and runs setup, status, and archive before model invocation. |
 | **hukuhaka-codex** | `0.4.0` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
@@ -71,6 +71,11 @@ unselected installed components are removed. Each host can reset managed
 plugins and skills before installing; template reset remains a separate
 choice. Claude is applied before Codex, and an independent Codex operation is
 still attempted if Claude fails.
+
+Plugin checkboxes show the target plugin version from the selected host
+manifest. Before confirmation, the installation plan compares each selected
+plugin's currently registered version with that target. Templates and features
+remain unversioned.
 
 Codex also offers an opt-in `Configure global Codex defaults` choice. It is
 unchecked by default. Reset and uninstall never modify Codex `config.toml`,
@@ -165,8 +170,8 @@ Codex:       $hukuhaka-report-planner
 Both write `.hukuhaka/reports/<short-name>/spec.md`, a host-neutral compatibility
 contract that either host can consume. Existing `.claude/reports/` plans remain a
 read-only fallback. The shared workflow discovers the reader job and evidence, explores
-the document structure and anchors, then locks a selective-reference design and
-build contract. Explicit planning requests stop at the validated spec; immediate
+the document structure, directs source-backed anchor construction, then locks a
+selective-reference build contract. Explicit planning requests stop at the finalized spec; immediate
 artifact requests use it as a preflight and delegate construction plus visual
 verification to one designer subagent.
 
