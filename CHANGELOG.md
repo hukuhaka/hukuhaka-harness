@@ -11,10 +11,11 @@ plugin version.
 
 ### Fixed
 
-- Fixed **`hukuhaka-worklog@0.2.1`** Codex command interception for the
+- Fixed **`hukuhaka-worklog@0.2.2`** Codex command interception for the
   plugin-qualified `$hukuhaka-worklog:worklog` identity and Codex Desktop's
-  bound Skill mention. Generated `AGENTS.md` guidance now uses the canonical
-  identity; the exact `$worklog` forms remain compatibility aliases.
+  bound Skill mention, including host-appended terminal newlines. Generated
+  `AGENTS.md` guidance now uses the canonical identity; the exact `$worklog`
+  forms remain compatibility aliases.
 - Documented Codex's `/hooks` review-and-trust gate. Untrusted hooks remain
   skipped instead of being auto-trusted or emulated by the lifecycle Skill.
 

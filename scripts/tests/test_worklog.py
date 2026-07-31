@@ -92,7 +92,9 @@ class WorklogScriptTests(unittest.TestCase):
     def test_hook_runs_all_codex_command_forms(self) -> None:
         forms = (
             "$hukuhaka-worklog:worklog {command}",
+            "$hukuhaka-worklog:worklog {command}\n",
             "[$hukuhaka-worklog:worklog](/tmp/plugin/skills/worklog/SKILL.md) {command}",
+            "[$hukuhaka-worklog:worklog](/tmp/plugin/skills/worklog/SKILL.md) {command}\r\n",
             "$worklog {command}",
         )
         expected_output = {
@@ -370,7 +372,7 @@ class WorklogPackageTests(unittest.TestCase):
         self.assertEqual("hukuhaka-worklog", claude["name"])
         self.assertEqual(claude["name"], codex["name"])
         self.assertEqual(claude["version"], codex["version"])
-        self.assertEqual("0.2.1", claude["version"])
+        self.assertEqual("0.2.2", claude["version"])
         self.assertEqual("./skills/", claude["skills"])
         self.assertEqual("./skills/", codex["skills"])
         self.assertEqual("./hooks/claude-codex-hooks.json", claude["hooks"])

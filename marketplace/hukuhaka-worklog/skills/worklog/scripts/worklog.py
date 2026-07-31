@@ -365,6 +365,7 @@ def hook_response(reason: str) -> str:
 
 
 def hook_command(prompt: str, codex: bool) -> str | None:
+    prompt = prompt.rstrip("\r\n")
     if not codex:
         return CLAUDE_COMMANDS.get(prompt)
     command = CODEX_COMMANDS.get(prompt)

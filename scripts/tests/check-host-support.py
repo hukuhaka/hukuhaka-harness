@@ -104,8 +104,8 @@ def main() -> int:
             "worklog Claude manifest must expose the shared ./skills/ tree", errors)
     require(worklog_codex.get("skills") == "./skills/",
             "worklog Codex manifest must expose the shared ./skills/ tree", errors)
-    require(worklog_claude.get("version") == "0.2.1",
-            "worklog plugin version must be 0.2.1", errors)
+    require(worklog_claude.get("version") == "0.2.2",
+            "worklog plugin version must be 0.2.2", errors)
     require(worklog_claude.get("hooks") == "./hooks/claude-codex-hooks.json",
             "worklog Claude manifest must expose the mechanical hook", errors)
     require(worklog_codex.get("hooks") == "./hooks/claude-codex-hooks.json",
