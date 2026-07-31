@@ -1,6 +1,6 @@
 {
   "name": "hukuhaka-worklog",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Maintain current project work and durable completion or closure history in a shared host-neutral worklog.",
   "author": {
     "name": "hukuhaka"
@@ -26,6 +26,6 @@
       "Write",
       "Lifecycle hooks"
     ],
-    "defaultPrompt": "Use $worklog to record or update this project's work."
+    "defaultPrompt": "Use $hukuhaka-worklog:worklog to record or update this project's work."
   }
 }

@@ -51,8 +51,24 @@ class WorklogScriptTests(unittest.TestCase):
         WORKLOG.setup(self.root, "codex")
 
         agents = (self.root / "AGENTS.md").read_text(encoding="utf-8")
-        self.assertIn("`$worklog`", agents)
+        self.assertIn("`$hukuhaka-worklog:worklog`", agents)
         self.assertFalse((self.root / "CLAUDE.md").exists())
+
+    def test_setup_replaces_legacy_codex_managed_block_only(self) -> None:
+        agents = self.root / "AGENTS.md"
+        legacy = WORKLOG.managed_block("codex").replace(
+            WORKLOG.CODEX_INVOCATION,
+            WORKLOG.CODEX_LEGACY_INVOCATION,
+        )
+        agents.write_text(f"# Existing\n\n{legacy}\n\nKeep this.\n", encoding="utf-8")
+
+        WORKLOG.setup(self.root, "codex")
+        updated = agents.read_text(encoding="utf-8")
+
+        self.assertIn("# Existing", updated)
+        self.assertIn("Keep this.", updated)
+        self.assertIn(f"`{WORKLOG.CODEX_INVOCATION}`", updated)
+        self.assertNotIn(f"`{WORKLOG.CODEX_LEGACY_INVOCATION}`", updated)
 
     def test_hook_runs_claude_setup_and_blocks_the_model(self) -> None:
         output = io.StringIO()
@@ -73,24 +89,58 @@ class WorklogScriptTests(unittest.TestCase):
         WORKLOG.run_hook(io.StringIO(json.dumps(payload)), repeated, {})
         self.assertIn("Created: none", json.loads(repeated.getvalue())["reason"])
 
-    def test_hook_runs_codex_setup_from_plugin_data(self) -> None:
-        output = io.StringIO()
-        payload = {
-            "prompt": "$worklog setup",
-            "cwd": str(self.root),
-        }
-
-        WORKLOG.run_hook(
-            io.StringIO(json.dumps(payload)),
-            output,
-            {"PLUGIN_DATA": ""},
+    def test_hook_runs_all_codex_command_forms(self) -> None:
+        forms = (
+            "$hukuhaka-worklog:worklog {command}",
+            "[$hukuhaka-worklog:worklog](/tmp/plugin/skills/worklog/SKILL.md) {command}",
+            "$worklog {command}",
         )
-        response = json.loads(output.getvalue())
+        expected_output = {
+            "setup": "worklog setup",
+            "status": "Worklog status",
+            "archive": "worklog archive",
+        }
+        for command in WORKLOG.COMMANDS:
+            for form in forms:
+                with self.subTest(command=command, form=form), tempfile.TemporaryDirectory(
+                    prefix="hukuhaka worklog command "
+                ) as temp:
+                    root = Path(temp)
+                    if command != "setup":
+                        WORKLOG.setup(root, "codex")
+                    if command == "archive":
+                        changelog = root / ".hukuhaka" / "changelog.md"
+                        entries = [
+                            history_entry(day, f"Entry {day}")
+                            for day in range(20, 9, -1)
+                        ]
+                        changelog.write_text(
+                            WORKLOG.CHANGELOG_TEMPLATE.rstrip()
+                            + "\n\n"
+                            + "\n\n".join(entries)
+                            + "\n",
+                            encoding="utf-8",
+                        )
 
-        self.assertEqual("block", response["decision"])
-        self.assertIn("worklog setup (codex)", response["reason"])
-        self.assertTrue((self.root / "AGENTS.md").is_file())
-        self.assertFalse((self.root / "CLAUDE.md").exists())
+                    output = io.StringIO()
+                    WORKLOG.run_hook(
+                        io.StringIO(
+                            json.dumps(
+                                {
+                                    "prompt": form.format(command=command),
+                                    "cwd": str(root),
+                                }
+                            )
+                        ),
+                        output,
+                        {"PLUGIN_DATA": ""},
+                    )
+                    response = json.loads(output.getvalue())
+
+                    self.assertEqual("block", response["decision"])
+                    self.assertIn(expected_output[command], response["reason"])
+                    self.assertTrue((root / "AGENTS.md").is_file())
+                    self.assertFalse((root / "CLAUDE.md").exists())
 
     def test_hook_status_and_archive_are_mechanical(self) -> None:
         WORKLOG.setup(self.root, "claude")
@@ -141,6 +191,13 @@ class WorklogScriptTests(unittest.TestCase):
             "$worklog record this as planned",
             "$worklog archive --keep 20",
             "$worklog status ",
+            "$hukuhaka-worklog:worklog setup ",
+            "$hukuhaka-worklog:worklog setup now",
+            "please $hukuhaka-worklog:worklog setup",
+            "$hukuhaka-worklog:other setup",
+            "[$hukuhaka-worklog:worklog]() setup",
+            "[$hukuhaka-worklog:worklog](/tmp/SKILL.md)\nsetup",
+            "[$worklog](/tmp/SKILL.md) setup",
             "please set up the worklog",
         ):
             with self.subTest(prompt=prompt):
@@ -156,7 +213,7 @@ class WorklogScriptTests(unittest.TestCase):
     def test_hook_fails_closed_for_recognized_command_errors(self) -> None:
         missing_cwd = io.StringIO()
         WORKLOG.run_hook(
-            io.StringIO(json.dumps({"prompt": "$worklog setup"})),
+            io.StringIO(json.dumps({"prompt": "$hukuhaka-worklog:worklog setup"})),
             missing_cwd,
             {"PLUGIN_DATA": "test"},
         )
@@ -313,7 +370,7 @@ class WorklogPackageTests(unittest.TestCase):
         self.assertEqual("hukuhaka-worklog", claude["name"])
         self.assertEqual(claude["name"], codex["name"])
         self.assertEqual(claude["version"], codex["version"])
-        self.assertEqual("0.2.0", claude["version"])
+        self.assertEqual("0.2.1", claude["version"])
         self.assertEqual("./skills/", claude["skills"])
         self.assertEqual("./skills/", codex["skills"])
         self.assertEqual("./hooks/claude-codex-hooks.json", claude["hooks"])

@@ -16,7 +16,7 @@ imply that a Claude Code plugin is portable to Codex.
 |-----------|---------|--------|-------|-------------------|
 | **hukuhaka-report-planner** | `0.6.0` | Supported | Claude Code, Codex | Frames and structures visual-document requests, directs source-backed anchor construction, and records a finalized `spec.md`. Explicit plan requests stop there; artifact requests delegate construction and visual verification to one designer subagent. |
 | **hukuhaka-engineering-plan** | `0.1.0` | Supported | Claude Code, Codex | Produces repository-grounded implementation plans with explicit contracts, counterexample checks, and requirement-to-verification mapping. |
-| **hukuhaka-worklog** | `0.2.0` | Supported | Claude Code, Codex | Maintains current work in `.hukuhaka/work.md`, records completed or closed outcomes in `.hukuhaka/changelog.md`, and runs setup, status, and archive before model invocation. |
+| **hukuhaka-worklog** | `0.2.1` | Supported | Claude Code, Codex | Maintains current work in `.hukuhaka/work.md`, records completed or closed outcomes in `.hukuhaka/changelog.md`, and runs setup, status, and archive before model invocation. |
 | **hukuhaka-codex** | `0.4.0` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
 | **CLAUDE.md template** | — | Supported | Claude Code only | Shared scoped-change and verification policy with Claude-specific `spec.md` sign-off and attribution-free commits, deployed to `~/.claude/CLAUDE.md`. |
 | **AGENTS.md template** | — | Supported | Codex only | Codex policy for scoped change previews, evidence-backed verification, compact-resilient task state, and a safe local Git lifecycle, merged into `$CODEX_HOME/AGENTS.md`. |
@@ -136,8 +136,9 @@ codex plugin add hukuhaka-worklog@hukuhaka-harness
 
 The Codex marketplace intentionally exposes only the components with native
 Codex packaging. Invoke the document planner as `$hukuhaka-report-planner`, the
-engineering planner as `$engineering-plan`, and the worklog as `$worklog`, or
-let Codex select them from their descriptions. The `agents-md` template is
+engineering planner as `$engineering-plan`, and the worklog as
+`$hukuhaka-worklog:worklog`, or let Codex select them from their descriptions.
+The `agents-md` template is
 installed by this repository's host-aware installer rather than the native
 plugin marketplace.
 
@@ -195,7 +196,7 @@ The same lifecycle Skill and mechanical commands are packaged for both hosts:
 
 ```text
 Claude Code: /hukuhaka-worklog:worklog <setup|status|archive>
-Codex:       $worklog <setup|status|archive>
+Codex:       $hukuhaka-worklog:worklog <setup|status|archive>
 ```
 
 The exact setup, status, and archive forms are intercepted by a
@@ -206,6 +207,16 @@ closed. Setup creates the host-neutral `.hukuhaka/{work,changelog}.md` files
 and adds a small managed awareness block to the current host's project
 instruction file (`CLAUDE.md` or `AGENTS.md`). It never reads or migrates a
 legacy `backlog.md`.
+
+After installing the Codex plugin, open `/hooks`, review the worklog hook, and
+trust it before using the mechanical commands. Codex skips untrusted plugin
+hooks; if an exact command reaches the model, review its trust state and retry
+instead of asking the Skill to emulate setup. See
+[Review and trust hooks](https://learn.chatgpt.com/docs/hooks#review-and-trust-hooks).
+
+Compatibility alias: `$worklog <setup|status|archive>` remains accepted in
+`hukuhaka-worklog@0.2.1`, but generated instructions and documentation use the
+canonical plugin-qualified identity.
 
 ## Design principles
 

@@ -9,7 +9,7 @@ Use `.hukuhaka/work.md` for current work and `.hukuhaka/changelog.md` for comple
 
 ## Manage lifecycle
 
-1. Require `.hukuhaka/work.md` and `.hukuhaka/changelog.md`. If either is missing, stop and ask the user to invoke the host's mechanical `worklog setup` command. Do not create the files yourself.
+1. Require `.hukuhaka/work.md` and `.hukuhaka/changelog.md`. If either is missing, stop and ask the user to invoke the exact host command: `/hukuhaka-worklog:worklog setup` in Claude Code or `$hukuhaka-worklog:worklog setup` in Codex. Do not create the files yourself. If the Codex command reached the model instead of the hook, tell the user to open `/hooks`, review and trust the worklog hook, then retry; do not emulate setup in the Skill.
 2. Read both files and identify an existing matching item before adding a new one. Preserve the user's language and do not invent IDs, priorities, owners, or schedules.
 3. Inspect the code or evidence needed to make the wording factual. Use at most three focused search rounds; pure ideas do not need a code anchor.
 4. Choose the state from the observed intent:

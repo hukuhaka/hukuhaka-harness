@@ -21,8 +21,10 @@ WORKLOG_CODEX_MANIFEST = WORKLOG / ".codex-plugin" / "plugin.json"
 MARKETPLACE = ROOT / ".agents" / "plugins" / "marketplace.json"
 SKILL = PLANNER / "skills" / "hukuhaka-report-planner" / "SKILL.md"
 WORKLOG_SKILL = WORKLOG / "skills" / "worklog" / "SKILL.md"
+WORKLOG_OPENAI = WORKLOG / "skills" / "worklog" / "agents" / "openai.yaml"
 WORKLOG_SCRIPT = WORKLOG / "skills" / "worklog" / "scripts" / "worklog.py"
 WORKLOG_HOOKS = WORKLOG / "hooks" / "claude-codex-hooks.json"
+HOST_SUPPORT = ROOT / "docs" / "host-support.md"
 DESIGNER_SKILL = PLANNER / "skills" / "artifact-designer" / "SKILL.md"
 DESIGNER_AGENT = PLANNER / "agents" / "artifact-designer.md"
 BUILD_HANDOFF = PLANNER / "skills" / "hukuhaka-report-planner" / "references" / "build-handoff.md"
@@ -56,6 +58,7 @@ def main() -> int:
         MARKETPLACE,
         SKILL,
         WORKLOG_SKILL,
+        WORKLOG_OPENAI,
         WORKLOG_SCRIPT,
         WORKLOG_HOOKS,
         DESIGNER_SKILL,
@@ -76,8 +79,10 @@ def main() -> int:
     marketplace = load_json(MARKETPLACE)
     skill = SKILL.read_text(encoding="utf-8")
     worklog_skill = WORKLOG_SKILL.read_text(encoding="utf-8")
+    worklog_openai = WORKLOG_OPENAI.read_text(encoding="utf-8")
     worklog_script = WORKLOG_SCRIPT.read_text(encoding="utf-8")
     worklog_hooks = load_json(WORKLOG_HOOKS)
+    host_support = HOST_SUPPORT.read_text(encoding="utf-8") if HOST_SUPPORT.is_file() else ""
     designer_skill = DESIGNER_SKILL.read_text(encoding="utf-8")
     designer_agent = DESIGNER_AGENT.read_text(encoding="utf-8")
     build_handoff = BUILD_HANDOFF.read_text(encoding="utf-8")
@@ -99,8 +104,8 @@ def main() -> int:
             "worklog Claude manifest must expose the shared ./skills/ tree", errors)
     require(worklog_codex.get("skills") == "./skills/",
             "worklog Codex manifest must expose the shared ./skills/ tree", errors)
-    require(worklog_claude.get("version") == "0.2.0",
-            "worklog plugin version must be 0.2.0", errors)
+    require(worklog_claude.get("version") == "0.2.1",
+            "worklog plugin version must be 0.2.1", errors)
     require(worklog_claude.get("hooks") == "./hooks/claude-codex-hooks.json",
             "worklog Claude manifest must expose the mechanical hook", errors)
     require(worklog_codex.get("hooks") == "./hooks/claude-codex-hooks.json",
@@ -169,9 +174,13 @@ def main() -> int:
 
     worklog_frontmatter = re.match(r"^---\n(.*?)\n---", worklog_skill, re.DOTALL)
     require(worklog_frontmatter is not None, "worklog skill has no frontmatter", errors)
+    worklog_skill_name = None
     if worklog_frontmatter:
         header = worklog_frontmatter.group(1)
-        require(re.search(r"^name:\s*worklog\s*$", header, re.MULTILINE) is not None,
+        name_match = re.search(r"^name:\s*([a-z0-9-]+)\s*$", header, re.MULTILINE)
+        require(name_match is not None, "worklog skill name is not portable", errors)
+        worklog_skill_name = name_match.group(1) if name_match else None
+        require(worklog_skill_name == "worklog",
                 "worklog skill name is not portable", errors)
         for key in ("allowed-tools:", "disable-model-invocation:", "argument-hint:"):
             require(key not in header,
@@ -192,6 +201,20 @@ def main() -> int:
             "worklog legacy backlog exclusion is missing", errors)
     require("write the changelog first" in worklog_skill,
             "worklog completion ordering is missing", errors)
+    worklog_plugin_name = worklog_codex.get("name")
+    if isinstance(worklog_plugin_name, str) and worklog_skill_name:
+        canonical = f"${worklog_plugin_name}:{worklog_skill_name}"
+        require(f'PLUGIN_NAME = "{worklog_plugin_name}"' in worklog_script,
+                "worklog runtime plugin identity differs from its manifest", errors)
+        require(f'SKILL_NAME = "{worklog_skill_name}"' in worklog_script,
+                "worklog runtime Skill identity differs from its frontmatter", errors)
+        require(canonical in worklog_openai,
+                "worklog OpenAI metadata does not use the canonical identity", errors)
+        require(canonical in str(worklog_codex.get("interface", {}).get("defaultPrompt", "")),
+                "worklog Codex manifest does not use the canonical identity", errors)
+        if host_support:
+            require(canonical in host_support,
+                    "host-support docs do not use the canonical worklog identity", errors)
     for contract in (
         '"CLAUDE.md" if host == "claude" else "AGENTS.md"',
         "hukuhaka-worklog:begin",
@@ -245,6 +268,12 @@ def main() -> int:
     require(not team_refs, "removed TEAM eval scenarios still exist", errors)
 
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    if isinstance(worklog_codex.get("name"), str) and worklog_skill_name:
+        canonical = f"${worklog_codex['name']}:{worklog_skill_name}"
+        require(canonical in readme,
+                "README does not use the canonical worklog identity", errors)
+        require("Compatibility alias: `$worklog" in readme,
+                "README does not document the worklog compatibility alias", errors)
     for removed_name in ("hukuhaka-project-mapper", "hukuhaka-ltm"):
         require(removed_name not in components,
                 f"removed component remains in catalog: {removed_name}", errors)

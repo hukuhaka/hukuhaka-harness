@@ -7,6 +7,17 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.5] — 2026-07-31
+
+### Fixed
+
+- Fixed **`hukuhaka-worklog@0.2.1`** Codex command interception for the
+  plugin-qualified `$hukuhaka-worklog:worklog` identity and Codex Desktop's
+  bound Skill mention. Generated `AGENTS.md` guidance now uses the canonical
+  identity; the exact `$worklog` forms remain compatibility aliases.
+- Documented Codex's `/hooks` review-and-trust gate. Untrusted hooks remain
+  skipped instead of being auto-trusted or emulated by the lifecycle Skill.
+
 ## [1.1.4] — 2026-07-30
 
 ### Changed

@@ -25,14 +25,25 @@ END_MARKER = "<!-- hukuhaka-worklog:end -->"
 WORK_SECTIONS = ("In Progress", "Planned", "On Hold")
 ENTRY_RE = re.compile(r"^### (\d{4})-(\d{2})-(\d{2}) — (.+?)\s*$")
 MONTH_RE = re.compile(r"^\d{4}-\d{2}\.md$")
+PLUGIN_NAME = "hukuhaka-worklog"
+SKILL_NAME = "worklog"
+COMMANDS = ("setup", "status", "archive")
+CLAUDE_INVOCATION = f"/{PLUGIN_NAME}:{SKILL_NAME}"
+CODEX_INVOCATION = f"${PLUGIN_NAME}:{SKILL_NAME}"
+CODEX_LEGACY_INVOCATION = f"${SKILL_NAME}"
 CLAUDE_COMMANDS = {
-    f"/hukuhaka-worklog:worklog {command}": command
-    for command in ("setup", "status", "archive")
+    f"{CLAUDE_INVOCATION} {command}": command
+    for command in COMMANDS
 }
 CODEX_COMMANDS = {
-    f"$worklog {command}": command
-    for command in ("setup", "status", "archive")
+    f"{invocation} {command}": command
+    for invocation in (CODEX_INVOCATION, CODEX_LEGACY_INVOCATION)
+    for command in COMMANDS
 }
+CODEX_BOUND_COMMAND = re.compile(
+    rf"\[{re.escape(CODEX_INVOCATION)}\]\([^\r\n]+\) "
+    rf"(?P<command>{'|'.join(COMMANDS)})"
+)
 
 WORK_TEMPLATE = """# Work
 
@@ -106,7 +117,7 @@ def atomic_write(path: Path, content: str) -> None:
 
 
 def managed_block(host: str) -> str:
-    invocation = "/hukuhaka-worklog:worklog" if host == "claude" else "$worklog"
+    invocation = CLAUDE_INVOCATION if host == "claude" else CODEX_INVOCATION
     return "\n".join(
         (
             BEGIN_MARKER,
@@ -353,6 +364,16 @@ def hook_response(reason: str) -> str:
     )
 
 
+def hook_command(prompt: str, codex: bool) -> str | None:
+    if not codex:
+        return CLAUDE_COMMANDS.get(prompt)
+    command = CODEX_COMMANDS.get(prompt)
+    if command is not None:
+        return command
+    match = CODEX_BOUND_COMMAND.fullmatch(prompt)
+    return match.group("command") if match else None
+
+
 def run_hook(
     source: TextIO,
     destination: TextIO,
@@ -366,9 +387,8 @@ def run_hook(
         return 0
 
     codex = "PLUGIN_DATA" in environment
-    commands = CODEX_COMMANDS if codex else CLAUDE_COMMANDS
     prompt = payload.get("prompt")
-    command = commands.get(prompt) if isinstance(prompt, str) else None
+    command = hook_command(prompt, codex) if isinstance(prompt, str) else None
     if command is None:
         return 0
 
