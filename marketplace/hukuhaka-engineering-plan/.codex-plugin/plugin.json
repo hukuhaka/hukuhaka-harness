@@ -1,7 +1,7 @@
 {
   "name": "hukuhaka-engineering-plan",
-  "version": "0.1.0",
-  "description": "Create repository-grounded, decision-complete engineering plans and audit their contracts, assumptions, and invariants.",
+  "version": "0.2.0",
+  "description": "Create repository-grounded, decision-complete engineering plans with closed impact surfaces and exact change deltas.",
   "author": {
     "name": "hukuhaka"
   },
@@ -18,7 +18,7 @@
   "interface": {
     "displayName": "Hukuhaka Engineering Plan",
     "shortDescription": "Ground and stress-test implementation plans.",
-    "longDescription": "Inspect the repository, define observable contracts, construct dependency-ordered changes, challenge important invariants with counterexamples, and map requirements to verification.",
+    "longDescription": "Inspect the repository, close the impact surface, define observable contracts, specify exact dependency-ordered changes, challenge important invariants, and map requirements to verification.",
     "developerName": "hukuhaka",
     "category": "Developer Tools",
     "capabilities": [

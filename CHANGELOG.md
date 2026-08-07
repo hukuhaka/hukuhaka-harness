@@ -7,6 +7,17 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.6] — 2026-08-07
+
+### Changed
+
+- Updated **`hukuhaka-engineering-plan@0.2.0`** to close repository impact
+  surfaces before planning, distinguish files that change from those that only
+  need verification, and express each implementation slice as current evidence,
+  exact delta, downstream effect, and verification. Implementation-shaping
+  defaults are now disclosed as assumptions, and plans reuse existing test
+  infrastructure unless a new harness is materially required.
+
 ## [1.1.5] — 2026-07-31
 
 ### Fixed

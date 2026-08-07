@@ -30,8 +30,35 @@ Keep three evidence classes distinct:
 - **Assumed** — a disclosed default selected because the first two are silent.
 
 Do not ask the user to reconfirm confirmed decisions.
+Treat every implementation-shaping choice that is neither Confirmed nor
+Verified as Assumed, including conventional defaults. Do not silently promote
+it to Confirmed or omit it from the final status.
 
-## 2. Define the contract
+## 2. Close the impact surface
+
+Start from the requested observable behavior and identify verified change
+seeds: entry points, symbols, routes, schemas, persisted state, configuration,
+or generated sources. Trace the applicable:
+
+- definitions and direct callers;
+- transitive consumers whose behavior or contract can change;
+- sources of truth and generated projections;
+- tests, documentation, migration, deployment, and operational paths.
+
+Classify each discovered surface as:
+
+- **Change** — implementation must change;
+- **Verify** — behavior may be affected but no edit is currently required;
+- **Unaffected** — inspected and excluded with a concrete reason;
+- **Unresolved** — the repository cannot establish the relationship or behavior.
+
+Record the file or symbol and evidence establishing each material relationship,
+and state the inspection boundary. Do not call the impact surface closed while a
+repository-discoverable caller, consumer, source-of-truth, or generation edge
+remains unresolved. If an unresolved edge can change the contract or
+implementation, mark the plan Blocked.
+
+## 3. Define the contract
 
 Define observable behavior before proposing file changes. Cover only dimensions
 that materially apply: public interfaces, input/output shapes, null and missing
@@ -45,22 +72,33 @@ table when a finite set of combinations would otherwise remain ambiguous.
 Separate required work from non-goals and deferred work. When requirements
 conflict, demonstrate the conflict and expose only the viable decisions.
 
-## 3. Construct the implementation path
+## 4. Construct the change plan
 
 Order changes by dependency. For each material slice, identify:
 
-- purpose and existing pattern to reuse;
-- files or symbols to change when verified;
-- invariants that remain unchanged;
-- data flow and compatibility effects;
-- tests or runtime evidence;
+- the requirement or contract row it satisfies;
+- the current flow and evidence at a verified file or symbol;
+- the exact behavior, shape, signature, state, or data-flow delta;
+- affected downstream consumers and invariants that remain unchanged;
+- files or symbols to change versus verify only;
+- tests or runtime evidence and the expected result;
 - the exact verified gate that closes the slice.
 
-Express multi-step work as `step → verification`. Separate behavior-preserving
-refactors from new behavior when that improves reviewability. Keep branch,
-commit, migration, and rollout ordering feasible in the observed repository.
+Express each slice as
+`current evidence → exact delta → downstream effect → verification`. Do not use
+placeholders such as "update the schema", "adjust the client", or "add tests"
+when the implementer would still need to choose the behavior. Separate
+behavior-preserving refactors from new behavior when that improves
+reviewability. Keep branch, commit, migration, and rollout ordering feasible in
+the observed repository.
 
-## 4. Try to break the plan
+Reuse observed repository test infrastructure and commands. If no existing gate
+can prove a material requirement, propose the smallest new test or harness as a
+planned delta, verify that its runtime or dependency exists, and do not describe
+the future command as an already verified repository gate. Do not add a file,
+tool, or documentation solely to satisfy the plan format.
+
+## 5. Try to break the plan
 
 For each material identity or invariant, construct at least one concrete
 boundary or adversarial example and calculate or trace the expected result.
@@ -78,7 +116,7 @@ Classify every failed invariant as:
 Revise the main plan after this audit. Never leave a stale plan in place and
 bury its contradiction in a risk list.
 
-## 5. Design verification
+## 6. Design verification
 
 Map every material requirement to evidence:
 
@@ -91,15 +129,17 @@ Include before/after evidence for read-only or state-preservation guarantees.
 Distinguish unit, contract, integration, generation-drift, build, and live-host
 checks instead of treating one passing suite as universal proof.
 
-## 6. Publish the revised plan
+## 7. Publish the revised plan
 
 Use the host's native plan envelope and interaction rules. Do not impose a
 Claude- or Codex-specific wrapper from this skill.
 
-Keep the output proportional, but include:
+Keep the output proportional: summarize repeated evidence instead of restating
+the same contract in the impact surface and every slice. Include:
 
 - readiness and the decisive reason;
 - confirmed work and non-goals;
+- the closed impact surface and its inspection boundary;
 - contracts and invariants;
 - dependency-ordered implementation;
 - verification evidence;
@@ -108,9 +148,11 @@ Keep the output proportional, but include:
 End with one status:
 
 - **Ready** — no unresolved contract or implementation decision remains.
-- **Ready with assumptions** — disclosed defaults remain but do not block work.
+- **Ready with assumptions** — disclosed defaults remain but do not block work;
+  use this whenever an Assumed choice materially shapes an exact delta.
 - **Blocked** — implementation would require an unresolved decision.
 
 Do not mark the plan Ready when requirements are mathematically or behaviorally
 incompatible, public failure semantics are missing, referenced repository facts
-were not verified, or the implementer would still need to choose the behavior.
+were not verified, the impact surface is not closed, or the implementer would
+still need to choose the behavior.

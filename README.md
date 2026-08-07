@@ -15,7 +15,7 @@ imply that a Claude Code plugin is portable to Codex.
 | Component | Version | Status | Hosts | What it gives you |
 |-----------|---------|--------|-------|-------------------|
 | **hukuhaka-report-planner** | `0.6.0` | Supported | Claude Code, Codex | Frames and structures visual-document requests, directs source-backed anchor construction, and records a finalized `spec.md`. Explicit plan requests stop there; artifact requests delegate construction and visual verification to one designer subagent. |
-| **hukuhaka-engineering-plan** | `0.1.0` | Supported | Claude Code, Codex | Produces repository-grounded implementation plans with explicit contracts, counterexample checks, and requirement-to-verification mapping. |
+| **hukuhaka-engineering-plan** | `0.2.0` | Supported | Claude Code, Codex | Produces repository-grounded implementation plans with closed impact surfaces, exact change deltas, and requirement-to-verification mapping. |
 | **hukuhaka-worklog** | `0.2.2` | Supported | Claude Code, Codex | Maintains current work in `.hukuhaka/work.md`, records completed or closed outcomes in `.hukuhaka/changelog.md`, and runs setup, status, and archive before model invocation. |
 | **hukuhaka-codex** | `0.4.0` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
 | **CLAUDE.md template** | — | Supported | Claude Code only | Shared scoped-change and verification policy with Claude-specific `spec.md` sign-off and attribution-free commits, deployed to `~/.claude/CLAUDE.md`. |
