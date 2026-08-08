@@ -18,6 +18,7 @@ from .common import (
     StateError,
     installer_state,
     load_json,
+    sha256_file,
 )
 
 
@@ -369,6 +370,7 @@ class CodexInstaller:
             for alias in component.get("aliases", [])
         }
         self.completed = []  # type: List[str]
+        self.install_results = {}  # type: Dict[str, Dict[str, Any]]
 
     @property
     def plugin_names(self) -> Set[str]:
@@ -398,6 +400,187 @@ class CodexInstaller:
             and plugin.get("marketplaceName") == self.marketplace
             and plugin.get("name")
         ]
+
+    def _plugin_source(self, component: str) -> Tuple[Path, Dict[str, Any]]:
+        catalog_entry = next(
+            (
+                item
+                for item in self.catalog.get("components", [])
+                if item.get("name") == component
+            ),
+            None,
+        )
+        host = catalog_entry.get("hosts", {}).get("codex", {}) if catalog_entry else {}
+        manifest_value = host.get("manifest") if isinstance(host, dict) else None
+        if not isinstance(manifest_value, str) or not manifest_value:
+            raise StateError(
+                "Codex plugin manifest path is missing for {}".format(component),
+                host="codex",
+                stage="plugin-cache-verify",
+                path=str(self.repo_root / "components.json"),
+            )
+        manifest_path = self.repo_root / manifest_value
+        metadata = load_json(manifest_path, {})
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("name") != component
+            or not isinstance(metadata.get("version"), str)
+            or not metadata["version"].strip()
+        ):
+            raise StateError(
+                "invalid Codex plugin manifest for {}".format(component),
+                host="codex",
+                stage="plugin-cache-verify",
+                path=str(manifest_path),
+            )
+        return manifest_path.parent.parent, metadata
+
+    @staticmethod
+    def _declared_payload_files(root: Path, metadata: Mapping[str, Any]) -> List[Path]:
+        files = [root / ".codex-plugin" / "plugin.json"]
+        for key in ("skills", "hooks"):
+            declared = metadata.get(key, [])
+            values = [declared] if isinstance(declared, str) else declared
+            if not isinstance(values, list) or any(
+                not isinstance(value, str) or not value.startswith("./")
+                for value in values
+            ):
+                raise StateError(
+                    "invalid {} declaration in Codex plugin manifest".format(key),
+                    host="codex",
+                    stage="plugin-cache-verify",
+                    path=str(root / ".codex-plugin" / "plugin.json"),
+                )
+            for value in values:
+                source = root / value[2:]
+                if source.is_dir():
+                    files.extend(path for path in source.rglob("*") if path.is_file())
+                elif source.is_file():
+                    files.append(source)
+                else:
+                    raise StateError(
+                        "declared Codex plugin payload is missing: {}".format(value),
+                        host="codex",
+                        stage="plugin-cache-verify",
+                        path=str(source),
+                    )
+        return list(dict.fromkeys(files))
+
+    def _validate_plugin_install(
+        self, component: str, result: Mapping[str, Any]
+    ) -> Path:
+        source_root, metadata = self._plugin_source(component)
+        version = str(metadata["version"]).strip()
+        expected = {
+            "pluginId": "{}@{}".format(component, self.marketplace),
+            "name": component,
+            "marketplaceName": self.marketplace,
+            "version": version,
+        }
+        for key, value in expected.items():
+            if result.get(key) != value:
+                raise InstallerError(
+                    "Codex plugin add returned unexpected {} for {}".format(
+                        key, component
+                    ),
+                    host="codex",
+                    stage="plugin-cache-verify",
+                )
+
+        installed_value = result.get("installedPath")
+        if not isinstance(installed_value, str) or not installed_value:
+            raise InstallerError(
+                "Codex plugin add returned no installedPath for {}".format(component),
+                host="codex",
+                stage="plugin-cache-verify",
+            )
+        installed_raw = Path(installed_value).expanduser()
+        try:
+            installed = installed_raw.resolve(strict=True)
+        except OSError as exc:
+            raise InstallerError(
+                "Codex plugin cache is missing after install: {}".format(exc),
+                host="codex",
+                stage="plugin-cache-verify",
+                path=str(installed_raw),
+            ) from exc
+        expected_root = (
+            self.codex_home
+            / "plugins"
+            / "cache"
+            / self.marketplace
+            / component
+            / version
+        ).resolve()
+        if installed != expected_root or not installed.is_dir():
+            raise InstallerError(
+                "Codex plugin installedPath is outside the expected versioned cache",
+                host="codex",
+                stage="plugin-cache-verify",
+                path=str(installed),
+            )
+
+        for source in self._declared_payload_files(source_root, metadata):
+            relative = source.relative_to(source_root)
+            cached = installed / relative
+            if not cached.is_file() or sha256_file(source) != sha256_file(cached):
+                raise InstallerError(
+                    "Codex plugin cache payload is missing or stale: {}".format(
+                        relative
+                    ),
+                    host="codex",
+                    stage="plugin-cache-verify",
+                    path=str(cached),
+                )
+        return installed
+
+    def _run_plugin_add(self, component: str) -> Dict[str, Any]:
+        return run_json(
+            (
+                "codex",
+                "plugin",
+                "add",
+                "{}@{}".format(component, self.marketplace),
+                "--json",
+            ),
+            stage="plugin-add",
+        )
+
+    def _install_plugin(self, component: str) -> Dict[str, Any]:
+        result = self._run_plugin_add(component)
+        try:
+            self._validate_plugin_install(component, result)
+            return result
+        except StateError:
+            raise
+        except InstallerError:
+            installed = next(
+                (
+                    plugin
+                    for plugin in self._plugins()
+                    if plugin.get("name") == component
+                ),
+                None,
+            )
+            if installed is not None:
+                self._remove_plugin(installed, stage="plugin-cache-repair")
+            print("  [repair] reinstalling invalid {} cache".format(component))
+            result = self._run_plugin_add(component)
+            try:
+                self._validate_plugin_install(component, result)
+            except StateError:
+                raise
+            except InstallerError as second_error:
+                raise InstallerError(
+                    "Codex plugin cache repair failed for {}: {}".format(
+                        component, second_error
+                    ),
+                    host="codex",
+                    stage="plugin-cache-repair",
+                    path=second_error.path,
+                ) from second_error
+            print("  [ok] repaired {} cache".format(component))
+            return result
 
     def _deploy_plugins(self, components: Sequence[str]) -> None:
         components = list(dict.fromkeys(item for item in components if item))
@@ -488,16 +671,7 @@ class CodexInstaller:
                 )
 
         for component in components:
-            run_json(
-                (
-                    "codex",
-                    "plugin",
-                    "add",
-                    "{}@{}".format(component, self.marketplace),
-                    "--json",
-                ),
-                stage="plugin-add",
-            )
+            self.install_results[component] = self._install_plugin(component)
             print("  [ok] {}@{}".format(component, self.marketplace))
 
     def current_components(self) -> Set[str]:
@@ -626,18 +800,34 @@ class CodexInstaller:
 
     def verify(self, desired: Set[str]) -> None:
         actual_plugins = {
-            str(plugin["name"])
+            str(plugin["name"]): plugin
             for plugin in self._plugins()
             if str(plugin["name"]) in self.plugin_names
         }
         expected_plugins = desired & self.plugin_names
         guidance = (self.codex_home / GUIDANCE_MANIFEST).is_file()
-        if actual_plugins != expected_plugins or guidance != ("agents-md" in desired):
+        if set(actual_plugins) != expected_plugins or guidance != ("agents-md" in desired):
             raise InstallerError(
                 "Codex post-install state does not match the requested components",
                 host="codex",
                 stage="verify",
             )
+        for component in sorted(expected_plugins):
+            _, metadata = self._plugin_source(component)
+            if actual_plugins[component].get("version") != metadata["version"]:
+                raise InstallerError(
+                    "Codex post-install version does not match for {}".format(component),
+                    host="codex",
+                    stage="verify",
+                )
+            result = self.install_results.get(component)
+            if result is None:
+                raise InstallerError(
+                    "Codex install result is missing for {}".format(component),
+                    host="codex",
+                    stage="verify",
+                )
+            self._validate_plugin_install(component, result)
 
     def uninstall(self) -> None:
         self._require_cli()

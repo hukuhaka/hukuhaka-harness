@@ -3,13 +3,14 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from scripts.install.claude import ClaudeDeployment
-from scripts.install.codex import CodexGuidanceDeployment
+from scripts.install.codex import CodexGuidanceDeployment, CodexInstaller
 from scripts.install.common import (
     DriftError,
     FileTransaction,
@@ -919,6 +920,123 @@ class InstallerSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual("partial", result.status)
+
+
+class CodexPluginCacheTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="hukuhaka codex cache ")
+        self.codex_home = Path(self.temp.name) / "codex-home"
+        self.codex_home.mkdir()
+        catalog = json.loads((ROOT / "components.json").read_text(encoding="utf-8"))
+        self.adapter = CodexInstaller(
+            ROOT,
+            catalog,
+            "1.1.6",
+            local_source=True,
+        )
+        self.adapter.codex_home = self.codex_home
+        self.component = "hukuhaka-worklog"
+        self.source = ROOT / "marketplace" / self.component
+        self.version = json.loads(
+            (self.source / ".codex-plugin" / "plugin.json").read_text(
+                encoding="utf-8"
+            )
+        )["version"]
+        self.cache = (
+            self.codex_home
+            / "plugins"
+            / "cache"
+            / self.adapter.marketplace
+            / self.component
+            / self.version
+        )
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def result(self) -> dict:
+        return {
+            "pluginId": "{}@{}".format(self.component, self.adapter.marketplace),
+            "name": self.component,
+            "marketplaceName": self.adapter.marketplace,
+            "version": self.version,
+            "installedPath": str(self.cache),
+        }
+
+    def populate_cache(self) -> None:
+        if self.cache.exists():
+            shutil.rmtree(self.cache)
+        self.cache.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(self.source, self.cache)
+
+    def installed_plugin(self) -> dict:
+        return {
+            "pluginId": "{}@{}".format(self.component, self.adapter.marketplace),
+            "name": self.component,
+            "marketplaceName": self.adapter.marketplace,
+            "version": self.version,
+        }
+
+    def test_validates_versioned_cache_and_declared_payload(self) -> None:
+        self.populate_cache()
+
+        installed = self.adapter._validate_plugin_install(
+            self.component, self.result()
+        )
+
+        self.assertEqual(self.cache.resolve(), installed)
+
+    def test_invalid_cache_is_removed_and_reinstalled_once(self) -> None:
+        self.populate_cache()
+        script = self.cache / "skills" / "worklog" / "scripts" / "worklog.py"
+        script.write_text("stale\n", encoding="utf-8")
+        add_calls = 0
+
+        def add(_component: str) -> dict:
+            nonlocal add_calls
+            add_calls += 1
+            if add_calls == 2:
+                self.populate_cache()
+            return self.result()
+
+        with mock.patch.object(
+            self.adapter, "_run_plugin_add", side_effect=add
+        ), mock.patch.object(
+            self.adapter, "_plugins", return_value=[self.installed_plugin()]
+        ), mock.patch.object(self.adapter, "_remove_plugin") as remove:
+            result = self.adapter._install_plugin(self.component)
+
+        self.assertEqual(self.result(), result)
+        self.assertEqual(2, add_calls)
+        remove.assert_called_once_with(
+            self.installed_plugin(), stage="plugin-cache-repair"
+        )
+
+    def test_repeated_invalid_cache_fails_after_one_reinstall(self) -> None:
+        with mock.patch.object(
+            self.adapter, "_run_plugin_add", return_value=self.result()
+        ) as add, mock.patch.object(
+            self.adapter, "_plugins", return_value=[self.installed_plugin()]
+        ), mock.patch.object(self.adapter, "_remove_plugin") as remove:
+            with self.assertRaisesRegex(
+                InstallerError, "plugin cache repair failed"
+            ):
+                self.adapter._install_plugin(self.component)
+
+        self.assertEqual(2, add.call_count)
+        remove.assert_called_once()
+
+    def test_final_verify_rejects_registered_version_drift(self) -> None:
+        self.populate_cache()
+        self.adapter.install_results[self.component] = self.result()
+        plugin = self.installed_plugin()
+        plugin["version"] = "0.2.0"
+
+        with mock.patch.object(self.adapter, "_plugins", return_value=[plugin]):
+            with self.assertRaisesRegex(
+                InstallerError, "post-install version does not match"
+            ):
+                self.adapter.verify({self.component})
 
 
 class CodexGuidanceTests(unittest.TestCase):

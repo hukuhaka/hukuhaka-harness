@@ -112,15 +112,22 @@ elif [ "${1:-}" = "plugin" ] && [ "${2:-}" = "list" ]; then
     printf ']}\n'
 elif [ "${1:-}" = "plugin" ] && [ "${2:-}" = "add" ]; then
     name="${3%%@*}"
+    version="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$FAKE_SOURCE_ROOT/marketplace/$name/.codex-plugin/plugin.json")"
+    cache_root="$CODEX_HOME/plugins/cache/hukuhaka-harness/$name"
+    installed="$cache_root/$version"
+    rm -rf "$cache_root"
+    mkdir -p "$cache_root"
+    cp -R "$FAKE_SOURCE_ROOT/marketplace/$name" "$installed"
     if ! grep -Fxq "$name" "$plugins"; then
         printf '%s\n' "$name" >> "$plugins"
     fi
-    printf '{}\n'
+    printf '{"pluginId":"%s@hukuhaka-harness","name":"%s","marketplaceName":"hukuhaka-harness","version":"%s","installedPath":"%s"}\n' "$name" "$name" "$version" "$installed"
 elif [ "${1:-}" = "plugin" ] && [ "${2:-}" = "remove" ]; then
     name="${3%%@*}"
     next="$plugins.next"
     grep -Fxv "$name" "$plugins" > "$next" || true
     mv "$next" "$plugins"
+    rm -rf "$CODEX_HOME/plugins/cache/hukuhaka-harness/$name"
     printf '{}\n'
 else
     printf 'unexpected fake codex args: %s\n' "$*" >&2

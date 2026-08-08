@@ -7,6 +7,15 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.7] — 2026-08-08
+
+### Fixed
+
+- Codex installs now verify the CLI-reported plugin version and versioned cache,
+  including every declared Skill and hook payload. An incomplete or stale cache
+  is repaired with one native remove-and-add cycle; installation fails if the
+  repaired cache is still invalid.
+
 ## [1.1.6] — 2026-08-07
 
 ### Changed

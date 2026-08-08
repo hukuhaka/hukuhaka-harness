@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -61,14 +62,47 @@ class FakeCodex:
             name = words[2].split("@", 1)[0]
             if name == self.fail_add:
                 raise InstallerError("injected plugin add failure")
+            source = ROOT / "marketplace" / name
+            metadata = json.loads(
+                (source / ".codex-plugin" / "plugin.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            version = str(metadata["version"])
+            cache_root = (
+                Path(os.environ["CODEX_HOME"])
+                / "plugins"
+                / "cache"
+                / "hukuhaka-harness"
+                / name
+            )
+            shutil.rmtree(cache_root, ignore_errors=True)
+            installed_path = cache_root / version
+            shutil.copytree(source, installed_path)
             self.plugins = [plugin for plugin in self.plugins if plugin["name"] != name]
-            self.installed(name)
-            return {}
+            result = {
+                "name": name,
+                "marketplaceName": "hukuhaka-harness",
+                "pluginId": "{}@hukuhaka-harness".format(name),
+                "version": version,
+                "installedPath": str(installed_path),
+            }
+            self.plugins.append(dict(result))
+            return result
         if words[:2] == ("plugin", "remove"):
             plugin_id = words[2]
+            name = plugin_id.split("@", 1)[0]
             self.plugins = [
                 plugin for plugin in self.plugins if plugin["pluginId"] != plugin_id
             ]
+            shutil.rmtree(
+                Path(os.environ["CODEX_HOME"])
+                / "plugins"
+                / "cache"
+                / "hukuhaka-harness"
+                / name,
+                ignore_errors=True,
+            )
             return {}
         if words[:3] == ("plugin", "marketplace", "remove"):
             self.marketplace = False
