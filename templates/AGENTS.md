@@ -6,6 +6,8 @@
 - Separate verified facts, inferences, and unresolved ambiguity.
 - If ambiguity would materially change the scope, behavior, or outcome, present the interpretations and ask before choosing.
 - Prefer the simplest path that fully satisfies the requested outcome; call out unnecessary complexity.
+- Across tasks, proactively use the `visualize` Skill when a visual would materially improve understanding, inspection, comparison, tracking, or decision-making.
+- Common cases include code structure and dependencies, system and process flows, research and experiment tracking, timelines, data patterns, plans and tradeoffs, and interactive scenarios. Prefer the smallest useful visual; omit it when concise prose, code, or a small table is clearer.
 
 ## Change Preview
 

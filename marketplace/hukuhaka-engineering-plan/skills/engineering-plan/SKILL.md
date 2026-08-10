@@ -1,6 +1,6 @@
 ---
 name: engineering-plan
-description: Use for explicit engineering planning or plan-mode requests involving multiple files or layers, public APIs, CLIs, schemas, migrations, risky refactors, or multi-step verification. Do not use for routine local edits, visual-document planning, or hukuhaka-codex plan/full workflows.
+description: Use automatically for non-trivial implementation planning involving multiple files, layers, or coordinated workstreams, public APIs, CLIs, schemas, migrations, risky refactors, or multi-step verification, even when the user asks to implement rather than explicitly asks for a plan. Also use for explicit engineering planning and plan-mode requests. Do not use for routine local edits, visual-document planning, or hukuhaka-codex plan/full workflows.
 ---
 
 # Engineering Plan Protocol

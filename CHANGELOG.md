@@ -7,6 +7,17 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.8] — 2026-08-10
+
+### Changed
+
+- Expanded the distributed `AGENTS.md` guidance to use the `visualize` Skill
+  proactively when diagrams, maps, plots, timelines, comparisons, or
+  interactive scenarios materially improve understanding or decision-making.
+- Updated **`hukuhaka-engineering-plan@0.2.1`** to activate automatically when
+  non-trivial implementation needs planning across multiple files, layers, or
+  coordinated workstreams. Routine local edits remain outside its scope.
+
 ## [1.1.7] — 2026-08-08
 
 ### Fixed
