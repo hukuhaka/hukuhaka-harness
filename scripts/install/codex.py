@@ -25,6 +25,7 @@ from .common import (
 BEGIN = b"<!-- hukuhaka-harness:begin -->"
 END = b"<!-- hukuhaka-harness:end -->"
 GUIDANCE_MANIFEST = ".hukuhaka-guidance-manifest.json"
+REMOTE_MARKETPLACE_SOURCE = "https://github.com/hukuhaka/hukuhaka-harness.git"
 
 
 def resolve_codex_home(
@@ -582,40 +583,35 @@ class CodexInstaller:
             print("  [ok] repaired {} cache".format(component))
             return result
 
-    def _deploy_plugins(self, components: Sequence[str]) -> None:
-        components = list(dict.fromkeys(item for item in components if item))
-        if not components:
-            return
-        source = (
-            str(self.repo_root)
-            if self.local_source
-            else "hukuhaka/hukuhaka-harness"
-        )
-        if self.dry_run:
-            print("Codex deploy:")
-            print("  [dry-run] marketplace add {}".format(source))
-            for component in components:
-                print("  [dry-run] plugin add {}@{}".format(component, self.marketplace))
-            return
-
-        command = ["codex", "plugin", "marketplace", "add", source, "--json"]
-        if not self.local_source:
-            command.extend(("--ref", "v{}".format(self.version)))
-        add_result = run_json(command, stage="marketplace-add")
-        already_added = bool(add_result.get("alreadyAdded"))
-
+    def _marketplace_info(self) -> Optional[Dict[str, Any]]:
         listing = run_json(
             ("codex", "plugin", "marketplace", "list", "--json"),
             stage="marketplace-list",
         )
-        info = next(
-            (
-                item
-                for item in listing.get("marketplaces", [])
-                if isinstance(item, dict) and item.get("name") == self.marketplace
-            ),
-            None,
-        )
+        matches = [
+            item
+            for item in listing.get("marketplaces", [])
+            if isinstance(item, dict) and item.get("name") == self.marketplace
+        ]
+        if len(matches) > 1:
+            raise InstallerError(
+                "marketplace '{}' was returned more than once".format(
+                    self.marketplace
+                ),
+                host="codex",
+                stage="marketplace-verify",
+            )
+        return matches[0] if matches else None
+
+    def _add_marketplace(self, source: str, *, ref: Optional[str], stage: str) -> None:
+        command = ["codex", "plugin", "marketplace", "add", source]
+        if ref is not None:
+            command.extend(("--ref", ref))
+        command.append("--json")
+        run_json(command, stage=stage)
+
+    def _verify_remote_marketplace(self, expected_commit: str) -> Dict[str, Any]:
+        info = self._marketplace_info()
         if info is None:
             raise InstallerError(
                 "marketplace '{}' was not returned after add".format(self.marketplace),
@@ -623,11 +619,59 @@ class CodexInstaller:
                 stage="marketplace-verify",
             )
         source_info = info.get("marketplaceSource", {})
-        source_type = source_info.get("sourceType", "") if isinstance(source_info, dict) else ""
-        source_value = source_info.get("source", "") if isinstance(source_info, dict) else ""
-        root_value = info.get("root", "")
+        source_type = (
+            source_info.get("sourceType", "") if isinstance(source_info, dict) else ""
+        )
+        source_value = (
+            source_info.get("source", "") if isinstance(source_info, dict) else ""
+        )
+        if source_type != "git" or source_value != REMOTE_MARKETPLACE_SOURCE:
+            raise InstallerError(
+                "marketplace '{}' points at a different source".format(
+                    self.marketplace
+                ),
+                host="codex",
+                stage="marketplace-verify",
+            )
+        root = Path(str(info.get("root", "")))
+        current = git_commit(root, "HEAD")
+        if not current or current != expected_commit:
+            raise InstallerError(
+                "marketplace '{}' did not resolve to the expected revision".format(
+                    self.marketplace
+                ),
+                host="codex",
+                stage="version-pin-verify",
+                path=str(root),
+            )
+        return info
 
+    def _ensure_marketplace(self, source: str) -> None:
+        info = self._marketplace_info()
         if self.local_source:
+            if info is None:
+                self._add_marketplace(source, ref=None, stage="marketplace-add")
+                self.completed.append("added marketplace")
+                info = self._marketplace_info()
+            if info is None:
+                raise InstallerError(
+                    "marketplace '{}' was not returned after add".format(
+                        self.marketplace
+                    ),
+                    host="codex",
+                    stage="marketplace-verify",
+                )
+            source_info = info.get("marketplaceSource", {})
+            source_type = (
+                source_info.get("sourceType", "")
+                if isinstance(source_info, dict)
+                else ""
+            )
+            source_value = (
+                source_info.get("source", "")
+                if isinstance(source_info, dict)
+                else ""
+            )
             try:
                 actual = Path(str(source_value)).resolve(strict=True)
                 expected = Path(source).resolve(strict=True)
@@ -646,7 +690,43 @@ class CodexInstaller:
                     host="codex",
                     stage="marketplace-verify",
                 )
-        elif source_type == "local":
+            return
+
+        target_ref = "v{}".format(self.version)
+        if info is None:
+            self._add_marketplace(source, ref=target_ref, stage="marketplace-add")
+            self.completed.append("added marketplace")
+            added = self._marketplace_info()
+            if added is None:
+                raise InstallerError(
+                    "marketplace '{}' was not returned after add".format(
+                        self.marketplace
+                    ),
+                    host="codex",
+                    stage="marketplace-verify",
+                )
+            root = Path(str(added.get("root", "")))
+            target_commit = git_commit(root, "{}^{{commit}}".format(target_ref))
+            if not target_commit:
+                raise InstallerError(
+                    "marketplace '{}' does not contain {}".format(
+                        self.marketplace, target_ref
+                    ),
+                    host="codex",
+                    stage="version-pin-verify",
+                    path=str(root),
+                )
+            self._verify_remote_marketplace(target_commit)
+            return
+
+        source_info = info.get("marketplaceSource", {})
+        source_type = (
+            source_info.get("sourceType", "") if isinstance(source_info, dict) else ""
+        )
+        source_value = (
+            source_info.get("source", "") if isinstance(source_info, dict) else ""
+        )
+        if source_type == "local":
             raise InstallerError(
                 "marketplace '{}' points at local source {}; remove or repoint it before using the public installer".format(
                     self.marketplace, source_value
@@ -654,21 +734,124 @@ class CodexInstaller:
                 host="codex",
                 stage="marketplace-verify",
             )
+        if source_type != "git" or source_value != REMOTE_MARKETPLACE_SOURCE:
+            raise InstallerError(
+                "marketplace '{}' already points at a different source".format(
+                    self.marketplace
+                ),
+                host="codex",
+                stage="marketplace-verify",
+            )
 
-        if already_added and not self.local_source:
-            root = Path(str(root_value))
-            expected_ref = "v{}^{{commit}}".format(self.version)
-            current = git_commit(root, "HEAD")
-            expected = git_commit(root, expected_ref)
-            if not current or not expected or current != expected:
+        old_root = Path(str(info.get("root", "")))
+        old_commit = git_commit(old_root, "HEAD")
+        if not old_commit:
+            raise InstallerError(
+                "cannot snapshot the existing marketplace revision",
+                host="codex",
+                stage="marketplace-update-preflight",
+                path=str(old_root),
+            )
+        target_commit = git_commit(old_root, "{}^{{commit}}".format(target_ref))
+        if target_commit and target_commit == old_commit:
+            self._verify_remote_marketplace(target_commit)
+            return
+
+        removed = False
+        try:
+            run_json(
+                (
+                    "codex",
+                    "plugin",
+                    "marketplace",
+                    "remove",
+                    self.marketplace,
+                    "--json",
+                ),
+                stage="marketplace-update",
+            )
+            removed = True
+            self._add_marketplace(source, ref=target_ref, stage="marketplace-update")
+            updated = self._marketplace_info()
+            if updated is None:
                 raise InstallerError(
-                    "marketplace '{}' already exists at a different ref; remove or repoint it before installing v{}".format(
-                        self.marketplace, self.version
+                    "marketplace '{}' was not returned after update".format(
+                        self.marketplace
                     ),
                     host="codex",
-                    stage="version-pin-verify",
-                    path=str(root),
+                    stage="marketplace-update",
                 )
+            updated_root = Path(str(updated.get("root", "")))
+            updated_commit = git_commit(
+                updated_root, "{}^{{commit}}".format(target_ref)
+            )
+            if not updated_commit:
+                raise InstallerError(
+                    "updated marketplace does not contain {}".format(target_ref),
+                    host="codex",
+                    stage="version-pin-verify",
+                    path=str(updated_root),
+                )
+            self._verify_remote_marketplace(updated_commit)
+        except InstallerError as original:
+            if not removed:
+                raise
+            try:
+                current = self._marketplace_info()
+                if current is not None:
+                    run_json(
+                        (
+                            "codex",
+                            "plugin",
+                            "marketplace",
+                            "remove",
+                            self.marketplace,
+                            "--json",
+                        ),
+                        stage="marketplace-rollback",
+                    )
+                self._add_marketplace(
+                    source, ref=old_commit, stage="marketplace-rollback"
+                )
+                self._verify_remote_marketplace(old_commit)
+            except InstallerError as rollback_error:
+                self.completed.append("marketplace update incomplete")
+                raise InstallerError(
+                    "marketplace update failed and rollback failed: {}; rollback: {}".format(
+                        original.render(), rollback_error.render()
+                    ),
+                    host="codex",
+                    stage="marketplace-rollback",
+                ) from rollback_error
+            raise InstallerError(
+                "marketplace update to {} failed; restored previous revision {}: {}".format(
+                    target_ref, old_commit[:12], original.render()
+                ),
+                host="codex",
+                stage="marketplace-update",
+                path=str(old_root),
+            ) from original
+
+        self.completed.append("updated marketplace to {}".format(target_ref))
+        print("  [ok] marketplace {} -> {}".format(self.marketplace, target_ref))
+
+    def _deploy_plugins(self, components: Sequence[str]) -> None:
+        components = list(dict.fromkeys(item for item in components if item))
+        if not components:
+            return
+        source = (
+            str(self.repo_root)
+            if self.local_source
+            else "hukuhaka/hukuhaka-harness"
+        )
+        if self.dry_run:
+            print("Codex deploy:")
+            print("  [dry-run] marketplace add {}".format(source))
+            for component in components:
+                print("  [dry-run] plugin add {}@{}".format(component, self.marketplace))
+            return
+
+        self._ensure_marketplace(source)
 
         for component in components:
             self.install_results[component] = self._install_plugin(component)

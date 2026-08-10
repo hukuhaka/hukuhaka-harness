@@ -153,6 +153,28 @@ exec {} "$@"
             """#!/bin/bash
 if [ "${1:-}" = "--version" ]; then
     printf 'claude bootstrap test double\\n'
+elif [ "${1:-}" = "plugin" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "--json" ]; then
+    config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    python3 - "$config_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+installed_path = root / "plugins" / "installed_plugins.json"
+settings_path = root / "settings.json"
+installed = json.loads(installed_path.read_text()) if installed_path.is_file() else {"plugins": {}}
+settings = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
+enabled = settings.get("enabledPlugins", {})
+plugins = []
+for plugin_id, entries in installed.get("plugins", {}).items():
+    if not isinstance(entries, list) or not entries:
+        continue
+    item = dict(entries[0])
+    item.update({"id": plugin_id, "enabled": enabled.get(plugin_id) is True})
+    plugins.append(item)
+print(json.dumps(plugins))
+PY
 fi
 exit 0
 """,

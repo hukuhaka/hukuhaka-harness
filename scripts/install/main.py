@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
-from .claude import ClaudeDeployment
+from .claude import ClaudeDeployment, resolve_claude_config_dir
 from .codex import CodexInstaller
 from .codex_config import (
     RECOMMENDED_SETTINGS,
@@ -187,7 +187,7 @@ class Installer:
     def _claude(self, components: Optional[Sequence[str]] = None) -> ClaudeDeployment:
         return ClaudeDeployment(
             self.repo_root,
-            Path.home(),
+            resolve_claude_config_dir(fallback_home=Path.home()),
             components,
             dry_run=bool(getattr(self.args, "dry_run", False)),
             force=bool(getattr(self.args, "force", False)),

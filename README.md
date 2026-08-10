@@ -104,6 +104,11 @@ For automation, `--recommended` selects supported catalog defaults and
 ./scripts/install.sh claude uninstall --yes
 ```
 
+The installer honors `CLAUDE_CONFIG_DIR`, verifies the resulting user plugins
+through `claude plugin list --json`, and rolls back the Claude transaction if
+the native version, enabled state, or install path does not match. Run
+`/reload-plugins` in an existing Claude Code session after a successful update.
+
 ### Codex
 
 Codex has the same component lifecycle:
@@ -113,6 +118,12 @@ Codex has the same component lifecycle:
 ./scripts/install.sh codex reset --recommended --include-template --yes
 ./scripts/install.sh codex uninstall --yes
 ```
+
+Remote installs keep the marketplace pinned to the resolved harness release.
+When the same official Git marketplace is registered at an older release, the
+installer replaces that ref automatically and restores the previous commit if
+the update fails. Local, forked, and otherwise different sources are preserved
+and rejected instead of being repointed.
 
 Remote automation passes the same host-first arguments:
 

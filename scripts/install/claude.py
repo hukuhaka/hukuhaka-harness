@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import filecmp
 import json
+import os
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,19 +43,31 @@ class DeploymentPlan:
     agent_teams: bool
 
 
+def resolve_claude_config_dir(
+    environ: Optional[Dict[str, str]] = None,
+    *,
+    fallback_home: Optional[Path] = None,
+) -> Path:
+    values = os.environ if environ is None else environ
+    configured = values.get("CLAUDE_CONFIG_DIR", "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    home = Path.home() if fallback_home is None else fallback_home
+    return (home / ".claude").resolve()
+
+
 class ClaudeDeployment:
     def __init__(
         self,
         repo_root: Path,
-        home: Path,
+        config_dir: Path,
         components: Optional[Sequence[str]],
         *,
         dry_run: bool = False,
         force: bool = False,
     ) -> None:
         self.repo_root = repo_root.resolve()
-        self.home = home.resolve()
-        self.claude_dir = self.home / ".claude"
+        self.claude_dir = config_dir.expanduser().resolve()
         self.manifest_path = self.claude_dir / ".hukuhaka-manifest.json"
         self.marketplace_dir = self.repo_root / "marketplace"
         self.skills_dir = self.repo_root / "skills"
@@ -427,6 +441,62 @@ class ClaudeDeployment:
                     versions[name] = version.strip()
         return components, versions
 
+    def _native_plugins(self) -> List[Dict[str, Any]]:
+        environment = os.environ.copy()
+        environment["CLAUDE_CONFIG_DIR"] = str(self.claude_dir)
+        try:
+            result = subprocess.run(
+                ("claude", "plugin", "list", "--json"),
+                check=True,
+                text=True,
+                capture_output=True,
+                timeout=30,
+                env=environment,
+            )
+        except FileNotFoundError as exc:
+            raise InstallerError(
+                "claude CLI is required for post-install verification",
+                host="claude",
+                stage="native-plugin-verify",
+                operation="run-command",
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or "").strip()
+            raise InstallerError(
+                "command failed ({}): {}".format(
+                    exc.returncode, detail or "no output"
+                ),
+                host="claude",
+                stage="native-plugin-verify",
+                operation="run-command",
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise InstallerError(
+                "command timed out after 30 seconds: claude plugin list --json",
+                host="claude",
+                stage="native-plugin-verify",
+                operation="run-command",
+            ) from exc
+        try:
+            native_plugins = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise InstallerError(
+                "command returned invalid JSON: {}".format(exc),
+                host="claude",
+                stage="native-plugin-verify",
+                operation="parse-command-output",
+            ) from exc
+        if not isinstance(native_plugins, list) or any(
+            not isinstance(plugin, dict) for plugin in native_plugins
+        ):
+            raise InstallerError(
+                "claude plugin list JSON root must be an array of objects",
+                host="claude",
+                stage="native-plugin-verify",
+                operation="parse-command-output",
+            )
+        return native_plugins
+
     def verify(self, expected: Sequence[str]) -> None:
         manifest = Manifest.load(self.manifest_path)
         if set(manifest.components) != set(expected):
@@ -457,6 +527,67 @@ class ClaudeDeployment:
                 host="claude",
                 stage="verify",
             )
+
+        native_plugins = self._native_plugins()
+        suffix = "@{}".format(self.marketplace_name)
+        managed = [
+            plugin
+            for plugin in native_plugins
+            if plugin.get("scope") == "user"
+            and isinstance(plugin.get("id"), str)
+            and str(plugin["id"]).endswith(suffix)
+        ]
+        by_id = {str(plugin["id"]): plugin for plugin in managed}
+        if len(by_id) != len(managed):
+            raise InstallerError(
+                "Claude returned duplicate managed user plugin entries",
+                host="claude",
+                stage="native-plugin-verify",
+            )
+        expected_plugins = sorted(set(expected) & set(self.all_plugin_names))
+        expected_ids = {
+            "{}@{}".format(name, self.marketplace_name) for name in expected_plugins
+        }
+        if set(by_id) != expected_ids:
+            raise InstallerError(
+                "Claude native plugin state does not match the requested components",
+                host="claude",
+                stage="native-plugin-verify",
+            )
+        for plugin_name in expected_plugins:
+            plugin_id = "{}@{}".format(plugin_name, self.marketplace_name)
+            plugin = by_id[plugin_id]
+            version = str(self._plugin_metadata(plugin_name).get("version", "unknown"))
+            if plugin.get("version") != version or plugin.get("enabled") is not True:
+                raise InstallerError(
+                    "Claude native plugin version or enabled state does not match for {}".format(
+                        plugin_name
+                    ),
+                    host="claude",
+                    stage="native-plugin-verify",
+                )
+            installed_value = plugin.get("installPath")
+            try:
+                installed = Path(str(installed_value)).expanduser().resolve(strict=True)
+            except OSError as exc:
+                raise InstallerError(
+                    "Claude native plugin install path is missing for {}".format(
+                        plugin_name
+                    ),
+                    host="claude",
+                    stage="native-plugin-verify",
+                    path=str(installed_value),
+                ) from exc
+            expected_path = (self.marketplace_root / plugin_name).resolve()
+            if installed != expected_path:
+                raise InstallerError(
+                    "Claude native plugin install path does not match for {}".format(
+                        plugin_name
+                    ),
+                    host="claude",
+                    stage="native-plugin-verify",
+                    path=str(installed),
+                )
 
     def deploy(
         self,
@@ -575,6 +706,7 @@ class ClaudeDeployment:
                     hashes=hashes,
                 )
                 transaction.write_json(self.manifest_path, next_manifest.as_dict())
+                self.verify(plan.components)
                 transaction.commit()
 
             cache = self.claude_dir / "plugins" / "cache" / self.marketplace_name
@@ -604,8 +736,8 @@ class ClaudeDeployment:
             print("  [ok] marketplace.json ({} plugin(s))".format(len(plan.selected_plugins)))
             print("")
             print("Deploy complete. v{}".format(self.version))
-        if not self.dry_run:
-            self.verify(self.selected_components())
+            if plan.selected_plugins or plan.dropped_plugins or plan.ghost_plugins:
+                print("Run /reload-plugins in existing Claude Code sessions.")
 
     def reset_for_install(self, *, reset_template: bool = False) -> None:
         """Remove installer-owned plugins/skills before a clean reinstall."""

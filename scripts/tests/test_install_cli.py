@@ -28,6 +28,28 @@ class InstallCliTests(unittest.TestCase):
             """#!/bin/bash
 if [ "${1:-}" = "--version" ]; then
     printf 'claude test double\n'
+elif [ "${1:-}" = "plugin" ] && [ "${2:-}" = "list" ] && [ "${3:-}" = "--json" ]; then
+    config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+    python3 - "$config_dir" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+installed_path = root / "plugins" / "installed_plugins.json"
+settings_path = root / "settings.json"
+installed = json.loads(installed_path.read_text()) if installed_path.is_file() else {"plugins": {}}
+settings = json.loads(settings_path.read_text()) if settings_path.is_file() else {}
+enabled = settings.get("enabledPlugins", {})
+plugins = []
+for plugin_id, entries in installed.get("plugins", {}).items():
+    if not isinstance(entries, list) or not entries:
+        continue
+    item = dict(entries[0])
+    item.update({"id": plugin_id, "enabled": enabled.get(plugin_id) is True})
+    plugins.append(item)
+print(json.dumps(plugins))
+PY
 fi
 exit 0
 """,
@@ -173,6 +195,18 @@ fi
         self.assertEqual(0, first_remove.returncode, first_remove.stderr)
         self.assertEqual(0, second_remove.returncode, second_remove.stderr)
         self.assertFalse(manifest_path.exists())
+
+    def test_claude_install_uses_configured_config_dir(self) -> None:
+        config_dir = self.temp / "custom claude config"
+        result = self._run(
+            ("claude", "install", "--recommended", "--yes"),
+            environment=self._environment(CLAUDE_CONFIG_DIR=str(config_dir)),
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertTrue((config_dir / ".hukuhaka-manifest.json").is_file())
+        self.assertFalse((self.home / ".claude").exists())
+        self.assertIn("Run /reload-plugins", result.stdout)
 
     def test_fake_codex_desired_state_dry_run_and_lifecycle(self) -> None:
         state, codex_home = self._install_fake_codex()

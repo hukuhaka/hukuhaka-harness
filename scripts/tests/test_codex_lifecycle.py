@@ -7,10 +7,10 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 from unittest import mock
 
-from scripts.install.codex import CodexInstaller
+from scripts.install.codex import REMOTE_MARKETPLACE_SOURCE, CodexInstaller
 from scripts.install.common import InstallerError
 
 
@@ -21,8 +21,32 @@ class FakeCodex:
     def __init__(self) -> None:
         self.plugins = []  # type: List[Dict[str, str]]
         self.marketplace = False
+        self.marketplace_source_type = ""
+        self.marketplace_source = ""
+        self.marketplace_root = ""
+        self.marketplace_commit = ""
+        self.marketplace_refs = {}  # type: Dict[str, str]
+        self.fail_marketplace_refs = set()  # type: set[str]
         self.calls = []  # type: List[Sequence[str]]
         self.fail_add = ""
+
+    def remote_marketplace(self, commit: str, *, ref: str = "v1.1.6") -> None:
+        self.marketplace = True
+        self.marketplace_source_type = "git"
+        self.marketplace_source = REMOTE_MARKETPLACE_SOURCE
+        self.marketplace_root = "/tmp/fake-marketplace"
+        self.marketplace_commit = commit
+        self.marketplace_refs[ref] = commit
+
+    def git_commit(self, _root: Path, ref: str) -> Optional[str]:
+        if not self.marketplace:
+            return None
+        if ref == "HEAD":
+            return self.marketplace_commit or None
+        suffix = "^{commit}"
+        return self.marketplace_refs.get(
+            ref[: -len(suffix)] if ref.endswith(suffix) else ref
+        )
 
     def installed(self, name: str) -> None:
         self.plugins.append(
@@ -39,7 +63,21 @@ class FakeCodex:
         if words == ("plugin", "list"):
             return {"installed": copy.deepcopy(self.plugins)}
         if words[:3] == ("plugin", "marketplace", "add"):
+            ref = words[words.index("--ref") + 1] if "--ref" in words else ""
+            if ref in self.fail_marketplace_refs:
+                raise InstallerError("injected marketplace add failure for {}".format(ref))
             self.marketplace = True
+            source = words[3]
+            if source.startswith("/"):
+                self.marketplace_source_type = "local"
+                self.marketplace_source = source
+                self.marketplace_root = source
+            else:
+                self.marketplace_source_type = "git"
+                self.marketplace_source = REMOTE_MARKETPLACE_SOURCE
+                self.marketplace_root = "/tmp/fake-marketplace"
+                self.marketplace_commit = ref
+                self.marketplace_refs[ref] = ref
             return {"alreadyAdded": False}
         if words == ("plugin", "marketplace", "list"):
             return {
@@ -48,10 +86,10 @@ class FakeCodex:
                         {
                             "name": "hukuhaka-harness",
                             "marketplaceSource": {
-                                "sourceType": "github",
-                                "source": "hukuhaka/hukuhaka-harness",
+                                "sourceType": self.marketplace_source_type,
+                                "source": self.marketplace_source,
                             },
-                            "root": "/tmp/fake-marketplace",
+                            "root": self.marketplace_root,
                         }
                     ]
                     if self.marketplace
@@ -136,7 +174,7 @@ class CodexLifecycleTests(unittest.TestCase):
         self.environment.stop()
         self.temp.cleanup()
 
-    def installer(self, *, local_source: bool = False) -> CodexInstaller:
+    def installer(self, *, local_source: bool = True) -> CodexInstaller:
         return CodexInstaller(
             ROOT,
             self.catalog,
@@ -167,14 +205,127 @@ class CodexLifecycleTests(unittest.TestCase):
         self.assertTrue((self.codex_home / "AGENTS.md").is_file())
 
     def test_remote_marketplace_is_pinned_to_the_resolved_release(self) -> None:
-        self.installer().install(["hukuhaka-report-planner"])
+        with mock.patch("scripts.install.codex.git_commit", return_value="target"):
+            self.installer(local_source=False).install(["hukuhaka-report-planner"])
 
         add = next(
             command
             for command in self.fake.calls
             if command[1:4] == ("plugin", "marketplace", "add")
         )
-        self.assertEqual(("--ref", "v1.2.3"), add[-2:])
+        self.assertEqual(("--ref", "v1.2.3"), add[-3:-1])
+
+    def test_remote_marketplace_old_ref_is_replaced_before_plugin_install(self) -> None:
+        self.fake.remote_marketplace("old-commit")
+
+        with mock.patch(
+            "scripts.install.codex.git_commit", side_effect=self.fake.git_commit
+        ):
+            installer = self.installer(local_source=False)
+            installer.install(["hukuhaka-report-planner"])
+
+        self.assertEqual("v1.2.3", self.fake.marketplace_commit)
+        remove_index = next(
+            index
+            for index, command in enumerate(self.fake.calls)
+            if command[1:4] == ("plugin", "marketplace", "remove")
+        )
+        marketplace_add_index = next(
+            index
+            for index, command in enumerate(self.fake.calls)
+            if command[1:4] == ("plugin", "marketplace", "add")
+        )
+        plugin_add_index = next(
+            index
+            for index, command in enumerate(self.fake.calls)
+            if command[1:3] == ("plugin", "add")
+        )
+        self.assertLess(remove_index, marketplace_add_index)
+        self.assertLess(marketplace_add_index, plugin_add_index)
+        self.assertIn("updated marketplace to v1.2.3", installer.completed)
+
+    def test_remote_marketplace_target_ref_is_reused(self) -> None:
+        self.fake.remote_marketplace("target-commit", ref="v1.2.3")
+
+        with mock.patch(
+            "scripts.install.codex.git_commit", side_effect=self.fake.git_commit
+        ):
+            self.installer(local_source=False).install(["hukuhaka-report-planner"])
+
+        marketplace_mutations = [
+            command
+            for command in self.fake.calls
+            if command[1:4]
+            in (
+                ("plugin", "marketplace", "add"),
+                ("plugin", "marketplace", "remove"),
+            )
+        ]
+        self.assertEqual([], marketplace_mutations)
+
+    def test_remote_marketplace_update_failure_restores_old_commit(self) -> None:
+        self.fake.remote_marketplace("old-commit")
+        self.fake.fail_marketplace_refs.add("v1.2.3")
+
+        with mock.patch(
+            "scripts.install.codex.git_commit", side_effect=self.fake.git_commit
+        ):
+            installer = self.installer(local_source=False)
+            with self.assertRaisesRegex(InstallerError, "restored previous revision"):
+                installer.install(["hukuhaka-report-planner"])
+
+        self.assertTrue(self.fake.marketplace)
+        self.assertEqual("old-commit", self.fake.marketplace_commit)
+        self.assertEqual([], installer.completed)
+
+    def test_remote_marketplace_rollback_failure_is_partial(self) -> None:
+        self.fake.remote_marketplace("old-commit")
+        self.fake.fail_marketplace_refs.update(("v1.2.3", "old-commit"))
+
+        with mock.patch(
+            "scripts.install.codex.git_commit", side_effect=self.fake.git_commit
+        ):
+            installer = self.installer(local_source=False)
+            with self.assertRaisesRegex(InstallerError, "rollback failed"):
+                installer.install(["hukuhaka-report-planner"])
+
+        self.assertFalse(self.fake.marketplace)
+        self.assertIn("marketplace update incomplete", installer.completed)
+
+    def test_remote_marketplace_foreign_source_is_preserved(self) -> None:
+        self.fake.remote_marketplace("foreign-commit")
+        self.fake.marketplace_source = "https://github.com/example/fork.git"
+
+        installer = self.installer(local_source=False)
+        with self.assertRaisesRegex(InstallerError, "different source"):
+            installer.install(["hukuhaka-report-planner"])
+
+        self.assertTrue(self.fake.marketplace)
+        self.assertFalse(
+            any(
+                command[1:4] == ("plugin", "marketplace", "remove")
+                for command in self.fake.calls
+            )
+        )
+
+    def test_remote_marketplace_without_head_is_preserved(self) -> None:
+        self.fake.remote_marketplace("")
+
+        with mock.patch(
+            "scripts.install.codex.git_commit", side_effect=self.fake.git_commit
+        ):
+            with self.assertRaisesRegex(InstallerError, "cannot snapshot"):
+                self.installer(local_source=False).install(
+                    ["hukuhaka-report-planner"]
+                )
+
+        self.assertTrue(self.fake.marketplace)
+        self.assertFalse(
+            any(
+                command[1:4] == ("plugin", "marketplace", "remove")
+                for command in self.fake.calls
+            )
+        )
 
     def test_canonical_add_failure_preserves_existing_alias(self) -> None:
         self.fake.installed("old-report-planner")

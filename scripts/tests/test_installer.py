@@ -4,12 +4,13 @@ import contextlib
 import io
 import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
-from scripts.install.claude import ClaudeDeployment
+from scripts.install.claude import ClaudeDeployment, resolve_claude_config_dir
 from scripts.install.codex import CodexGuidanceDeployment, CodexInstaller
 from scripts.install.common import (
     DriftError,
@@ -17,6 +18,7 @@ from scripts.install.common import (
     InstallerError,
     InstallerLock,
     StateError,
+    sha256_file,
 )
 from scripts.install.main import (
     HostComponentState,
@@ -35,9 +37,44 @@ class InstallerTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="hukuhaka installer ")
         self.home = Path(self.temp.name)
+        self.native_plugins = mock.patch.object(
+            ClaudeDeployment,
+            "_native_plugins",
+            side_effect=self._registered_claude_plugins,
+        )
+        self.native_plugins.start()
 
     def tearDown(self) -> None:
+        self.native_plugins.stop()
         self.temp.cleanup()
+
+    def _registered_claude_plugins(self) -> list[dict]:
+        installed_path = self.claude / "plugins" / "installed_plugins.json"
+        settings_path = self.claude / "settings.json"
+        installed = (
+            json.loads(installed_path.read_text(encoding="utf-8"))
+            if installed_path.is_file()
+            else {"plugins": {}}
+        )
+        settings = (
+            json.loads(settings_path.read_text(encoding="utf-8"))
+            if settings_path.is_file()
+            else {}
+        )
+        enabled = settings.get("enabledPlugins", {})
+        result = []
+        for plugin_id, entries in installed.get("plugins", {}).items():
+            if not isinstance(entries, list) or not entries:
+                continue
+            entry = dict(entries[0])
+            entry.update(
+                {
+                    "id": plugin_id,
+                    "enabled": enabled.get(plugin_id) is True,
+                }
+            )
+            result.append(entry)
+        return result
 
     @property
     def claude(self) -> Path:
@@ -48,7 +85,7 @@ class InstallerTestCase(unittest.TestCase):
         return self.claude / ".hukuhaka-manifest.json"
 
     def deployment(self, *, force: bool = False, dry_run: bool = False) -> ClaudeDeployment:
-        return ClaudeDeployment(ROOT, self.home, COMPONENTS, force=force, dry_run=dry_run)
+        return ClaudeDeployment(ROOT, self.claude, COMPONENTS, force=force, dry_run=dry_run)
 
     def test_fresh_reinstall_and_uninstall_are_idempotent(self) -> None:
         self.deployment().deploy()
@@ -390,7 +427,7 @@ class InstallerTestCase(unittest.TestCase):
     def test_current_component_state_reads_plugin_versions(self) -> None:
         deployment = ClaudeDeployment(
             ROOT,
-            self.home,
+            self.claude,
             ["hukuhaka-worklog"],
         )
         deployment.deploy()
@@ -403,7 +440,7 @@ class InstallerTestCase(unittest.TestCase):
     def test_current_component_state_treats_missing_version_as_unknown(self) -> None:
         deployment = ClaudeDeployment(
             ROOT,
-            self.home,
+            self.claude,
             ["hukuhaka-worklog"],
         )
         deployment.deploy()
@@ -417,6 +454,71 @@ class InstallerTestCase(unittest.TestCase):
         self.assertEqual({"hukuhaka-worklog"}, components)
         self.assertNotIn("hukuhaka-worklog", versions)
 
+    def test_claude_config_dir_overrides_default_home(self) -> None:
+        configured = self.home / "custom claude"
+
+        self.assertEqual(
+            configured.resolve(),
+            resolve_claude_config_dir(
+                {"CLAUDE_CONFIG_DIR": str(configured)},
+                fallback_home=self.home,
+            ),
+        )
+        self.assertEqual(
+            self.claude.resolve(),
+            resolve_claude_config_dir({}, fallback_home=self.home),
+        )
+
+    def test_native_version_mismatch_rolls_back_the_whole_claude_update(self) -> None:
+        self.deployment().deploy()
+        plugin_relative = (
+            "plugins/hukuhaka-plugin/hukuhaka-report-planner/"
+            ".claude-plugin/plugin.json"
+        )
+        plugin_path = self.claude / plugin_relative
+        plugin = json.loads(plugin_path.read_text(encoding="utf-8"))
+        plugin["version"] = "0.5.0"
+        plugin_path.write_text(json.dumps(plugin), encoding="utf-8")
+
+        registry_path = self.claude / "plugins" / "installed_plugins.json"
+        registry = json.loads(registry_path.read_text(encoding="utf-8"))
+        registry["plugins"][
+            "hukuhaka-report-planner@hukuhaka-plugin"
+        ][0]["version"] = "0.5.0"
+        registry_path.write_text(json.dumps(registry), encoding="utf-8")
+
+        manifest = json.loads(self.manifest.read_text(encoding="utf-8"))
+        manifest["version"] = "1.1.7"
+        manifest["hashes"][plugin_relative] = sha256_file(plugin_path)
+        self.manifest.write_text(json.dumps(manifest), encoding="utf-8")
+        before = {
+            path.relative_to(self.claude).as_posix(): path.read_bytes()
+            for path in self.claude.rglob("*")
+            if path.is_file()
+        }
+
+        def stale_native_state() -> list[dict]:
+            plugins = self._registered_claude_plugins()
+            for item in plugins:
+                if item["id"] == "hukuhaka-report-planner@hukuhaka-plugin":
+                    item["version"] = "0.5.0"
+            return plugins
+
+        deployment = self.deployment()
+        with mock.patch.object(
+            deployment, "_native_plugins", side_effect=stale_native_state
+        ):
+            with self.assertRaisesRegex(
+                InstallerError, "version or enabled state does not match"
+            ):
+                deployment.deploy()
+
+        after = {
+            path.relative_to(self.claude).as_posix(): path.read_bytes()
+            for path in self.claude.rglob("*")
+            if path.is_file()
+        }
+        self.assertEqual(before, after)
     def test_dry_run_reset_does_not_contend_for_the_lock(self) -> None:
         # Over-correction guard: reset already avoided this with nullcontext and
         # must keep avoiding it now that both paths share one manager.
@@ -480,6 +582,46 @@ class InstallerTestCase(unittest.TestCase):
         self.deployment().reset_for_install(reset_template=True)
         self.assertFalse((self.claude / "CLAUDE.md").exists())
         self.assertFalse(self.manifest.exists())
+
+
+class ClaudeNativeCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="hukuhaka claude native ")
+        self.config_dir = Path(self.temp.name) / "config"
+        self.deployment = ClaudeDeployment(
+            ROOT,
+            self.config_dir,
+            ["hukuhaka-engineering-plan"],
+        )
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def test_native_plugin_list_rejects_malformed_json(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ("claude", "plugin", "list", "--json"),
+            0,
+            stdout="{broken",
+            stderr="",
+        )
+        with mock.patch(
+            "scripts.install.claude.subprocess.run", return_value=completed
+        ):
+            with self.assertRaisesRegex(InstallerError, "invalid JSON"):
+                self.deployment._native_plugins()
+
+    def test_native_plugin_list_reports_command_failure(self) -> None:
+        failure = subprocess.CalledProcessError(
+            1,
+            ("claude", "plugin", "list", "--json"),
+            stderr="injected native failure",
+        )
+        with mock.patch(
+            "scripts.install.claude.subprocess.run", side_effect=failure
+        ):
+            with self.assertRaisesRegex(InstallerError, "injected native failure"):
+                self.deployment._native_plugins()
+
 
 class InstallerSelectionTests(unittest.TestCase):
     def installer(self, *arguments: str) -> Installer:

@@ -7,6 +7,19 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.9] — 2026-08-10
+
+### Fixed
+
+- Codex installs now update an existing official `hukuhaka-harness` marketplace
+  from its previous pinned release without requiring a manual reset. A failed
+  ref update restores the previous commit, while local and foreign sources are
+  left untouched.
+- Claude installs now honor `CLAUDE_CONFIG_DIR` and commit only after the native
+  plugin list confirms each requested user plugin's version, enabled state, and
+  install path. Failed native verification rolls back the whole transaction,
+  and successful updates tell existing sessions to run `/reload-plugins`.
+
 ## [1.1.8] — 2026-08-10
 
 ### Changed
