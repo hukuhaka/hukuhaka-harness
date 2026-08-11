@@ -124,9 +124,13 @@ def managed_block(host: str) -> str:
             "## Worklog",
             "",
             "- `.hukuhaka/work.md` contains current Planned, In Progress, and On Hold work.",
-            f"- Use the installed `{invocation}` Skill when recording or changing work.",
+            "- On the first non-trivial project task in a new session, read it before changing project files when both Worklog files exist.",
+            "- Read `.hukuhaka/changelog.md` only when resuming, completing, closing, or checking prior decisions.",
+            f"- Use the installed `{invocation}` Skill automatically when non-trivial project work starts, resumes, pauses, completes, or closes.",
+            "- Analysis, implementation planning, routine one-off edits, and mechanical Worklog commands do not change lifecycle state.",
+            "- If the files are missing during automatic use, continue the task without creating them; explicit Worklog requests require setup.",
+            "- Only the primary agent changes Worklog state; delegated agents may read it but must not modify it.",
             "- Completed and closed work belongs in `.hukuhaka/changelog.md`.",
-            "- Read these files when current work state or prior decisions are relevant.",
             END_MARKER,
         )
     )

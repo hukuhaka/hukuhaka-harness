@@ -104,8 +104,8 @@ def main() -> int:
             "worklog Claude manifest must expose the shared ./skills/ tree", errors)
     require(worklog_codex.get("skills") == "./skills/",
             "worklog Codex manifest must expose the shared ./skills/ tree", errors)
-    require(worklog_claude.get("version") == "0.2.2",
-            "worklog plugin version must be 0.2.2", errors)
+    require(worklog_claude.get("version") == "0.3.0",
+            "worklog plugin version must be 0.3.0", errors)
     require(worklog_claude.get("hooks") == "./hooks/claude-codex-hooks.json",
             "worklog Claude manifest must expose the mechanical hook", errors)
     require(worklog_codex.get("hooks") == "./hooks/claude-codex-hooks.json",
@@ -191,8 +191,12 @@ def main() -> int:
             "worklog skill contains Claude-only shell interpolation", errors)
     require("references/writing-guide.md" not in worklog_skill,
             "worklog skill still depends on the removed writing guide", errors)
-    require("Do not use for mechanical setup, status, or archive commands" in worklog_skill,
+    require("mechanical setup/status/archive commands" in worklog_skill,
             "worklog lifecycle trigger still claims mechanical commands", errors)
+    require("Use automatically when a project has .hukuhaka/work.md" in worklog_skill,
+            "worklog automatic lifecycle trigger is missing", errors)
+    require("first non-trivial project task in a new session" in worklog_script,
+            "worklog session-orientation guidance is missing", errors)
     require(".hukuhaka/work.md" in worklog_skill,
             "worklog host-neutral current-work path is missing", errors)
     require(".hukuhaka/changelog.md" in worklog_skill,

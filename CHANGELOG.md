@@ -7,6 +7,16 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.10] — 2026-08-11
+
+### Changed
+
+- Updated **`hukuhaka-worklog@0.3.0`** to read current work before the first
+  non-trivial project task in a new session and automatically track natural
+  lifecycle changes without requiring the user to name Worklog. Analysis,
+  planning, routine one-off edits, missing Worklog files, delegated agents, and
+  pre-existing user changes remain outside automatic mutation.
+
 ## [1.1.9] — 2026-08-10
 
 ### Fixed

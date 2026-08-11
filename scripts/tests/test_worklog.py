@@ -52,13 +52,28 @@ class WorklogScriptTests(unittest.TestCase):
 
         agents = (self.root / "AGENTS.md").read_text(encoding="utf-8")
         self.assertIn("`$hukuhaka-worklog:worklog`", agents)
+        self.assertIn("first non-trivial project task in a new session", agents)
+        self.assertIn("Only the primary agent changes Worklog state", agents)
         self.assertFalse((self.root / "CLAUDE.md").exists())
 
     def test_setup_replaces_legacy_codex_managed_block_only(self) -> None:
         agents = self.root / "AGENTS.md"
-        legacy = WORKLOG.managed_block("codex").replace(
-            WORKLOG.CODEX_INVOCATION,
-            WORKLOG.CODEX_LEGACY_INVOCATION,
+        work = self.root / ".hukuhaka" / "work.md"
+        changelog = self.root / ".hukuhaka" / "changelog.md"
+        work.parent.mkdir()
+        work.write_text("existing work\n", encoding="utf-8")
+        changelog.write_text("existing history\n", encoding="utf-8")
+        legacy = "\n".join(
+            (
+                WORKLOG.BEGIN_MARKER,
+                "## Worklog",
+                "",
+                "- `.hukuhaka/work.md` contains current Planned, In Progress, and On Hold work.",
+                "- Use the installed `$worklog` Skill when recording or changing work.",
+                "- Completed and closed work belongs in `.hukuhaka/changelog.md`.",
+                "- Read these files when current work state or prior decisions are relevant.",
+                WORKLOG.END_MARKER,
+            )
         )
         agents.write_text(f"# Existing\n\n{legacy}\n\nKeep this.\n", encoding="utf-8")
 
@@ -69,6 +84,8 @@ class WorklogScriptTests(unittest.TestCase):
         self.assertIn("Keep this.", updated)
         self.assertIn(f"`{WORKLOG.CODEX_INVOCATION}`", updated)
         self.assertNotIn(f"`{WORKLOG.CODEX_LEGACY_INVOCATION}`", updated)
+        self.assertEqual("existing work\n", work.read_text(encoding="utf-8"))
+        self.assertEqual("existing history\n", changelog.read_text(encoding="utf-8"))
 
     def test_hook_runs_claude_setup_and_blocks_the_model(self) -> None:
         output = io.StringIO()
@@ -372,7 +389,7 @@ class WorklogPackageTests(unittest.TestCase):
         self.assertEqual("hukuhaka-worklog", claude["name"])
         self.assertEqual(claude["name"], codex["name"])
         self.assertEqual(claude["version"], codex["version"])
-        self.assertEqual("0.2.2", claude["version"])
+        self.assertEqual("0.3.0", claude["version"])
         self.assertEqual("./skills/", claude["skills"])
         self.assertEqual("./skills/", codex["skills"])
         self.assertEqual("./hooks/claude-codex-hooks.json", claude["hooks"])
@@ -384,6 +401,9 @@ class WorklogPackageTests(unittest.TestCase):
         self.assertNotIn("disable-model-invocation", header)
         self.assertNotIn("allowed-tools", header)
         self.assertIn(".hukuhaka/work.md", skill)
+        self.assertIn("Use automatically when a project has .hukuhaka/work.md", skill)
+        self.assertIn("If either already has user changes", skill)
+        self.assertIn("Only the primary agent changes Worklog state", skill)
         self.assertIn("Never read, migrate, or write a legacy `backlog.md`", skill)
         self.assertNotIn("references/writing-guide.md", skill)
         self.assertFalse(

@@ -435,7 +435,7 @@ class InstallerTestCase(unittest.TestCase):
         components, versions = deployment.current_component_state()
 
         self.assertEqual({"hukuhaka-worklog"}, components)
-        self.assertEqual("0.2.2", versions["hukuhaka-worklog"])
+        self.assertEqual("0.3.0", versions["hukuhaka-worklog"])
 
     def test_current_component_state_treats_missing_version_as_unknown(self) -> None:
         deployment = ClaudeDeployment(
@@ -715,7 +715,7 @@ class InstallerSelectionTests(unittest.TestCase):
                 },
                 {
                     "hukuhaka-engineering-plan": "0.0.9",
-                    "hukuhaka-worklog": "0.2.2",
+                    "hukuhaka-worklog": "0.3.0",
                 },
             )
         )
@@ -729,7 +729,7 @@ class InstallerSelectionTests(unittest.TestCase):
             summary["hukuhaka-engineering-plan"],
         )
         self.assertEqual(
-            "0.2.2 (same version)",
+            "0.3.0 (same version)",
             summary["hukuhaka-worklog"],
         )
         self.assertEqual(
