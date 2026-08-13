@@ -63,6 +63,54 @@ class CodexConfigTextTests(unittest.TestCase):
         self.assertNotIn("\n[tui]\n", updated)
         self.assertEqual(RECOMMENDED_SETTINGS, current_values(updated))
 
+    def test_legacy_agent_limit_is_migrated_in_place(self) -> None:
+        original = (
+            "[agents]\n"
+            "max_threads = 7 # legacy limit\n"
+            'default_subagent_model = "user-model"\n'
+        )
+        self.assertEqual(
+            "7",
+            current_values(original)[
+                ("agents", "max_concurrent_threads_per_session")
+            ],
+        )
+
+        updated = update_config(original, RECOMMENDED_SETTINGS)
+
+        self.assertIn(
+            "max_concurrent_threads_per_session = 4 # legacy limit\n",
+            updated,
+        )
+        self.assertNotIn("\nmax_threads =", updated)
+        self.assertIn('default_subagent_model = "user-model"\n', updated)
+        self.assertEqual(RECOMMENDED_SETTINGS, current_values(updated))
+        self.assertEqual(updated, update_config(updated, RECOMMENDED_SETTINGS))
+
+    def test_dotted_legacy_agent_limit_is_migrated(self) -> None:
+        updated = update_config(
+            "agents.max_threads = 2\n",
+            {("agents", "max_concurrent_threads_per_session"): "4"},
+        )
+
+        self.assertEqual(
+            "agents.max_concurrent_threads_per_session = 4\n",
+            updated,
+        )
+
+    def test_legacy_and_canonical_agent_limits_are_rejected(self) -> None:
+        with self.assertRaisesRegex(
+            StateError,
+            "duplicate managed Codex config key: "
+            "agents.max_concurrent_threads_per_session",
+        ):
+            update_config(
+                "[agents]\n"
+                "max_threads = 4\n"
+                "max_concurrent_threads_per_session = 4\n",
+                RECOMMENDED_SETTINGS,
+            )
+
     def test_multiline_managed_array_is_replaced_as_one_value(self) -> None:
         original = (
             "[tui]\n"
@@ -154,6 +202,25 @@ class CodexConfigApplyTests(unittest.TestCase):
             side_effect=InstallerError("doctor rejected config"),
         ):
             with self.assertRaisesRegex(InstallerError, "doctor rejected"):
+                editor.apply(plan, show_diff=False)
+
+        self.assertEqual(original, path.read_bytes())
+        self.assertEqual(original, editor.backup.read_bytes())
+
+    def test_legacy_migration_failure_restores_the_original(self) -> None:
+        self.codex_home.mkdir()
+        path = self.codex_home / "config.toml"
+        original = b"[agents]\nmax_threads = 6 # keep on rollback\n"
+        path.write_bytes(original)
+        editor = self.editor()
+        plan = editor.plan(RECOMMENDED_SETTINGS)
+
+        with mock.patch.object(
+            editor,
+            "_doctor",
+            side_effect=InstallerError("doctor rejected migrated config"),
+        ):
+            with self.assertRaisesRegex(InstallerError, "doctor rejected migrated"):
                 editor.apply(plan, show_diff=False)
 
         self.assertEqual(original, path.read_bytes())

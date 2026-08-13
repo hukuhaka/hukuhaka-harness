@@ -48,9 +48,30 @@ EVIDENCE_SCOUT_SETTINGS = {
 # value depends on CODEX_HOME, so it cannot live in RECOMMENDED_SETTINGS.
 EVIDENCE_SCOUT_DYNAMIC_KEYS = {("model_catalog_json",)}
 
+# Codex still accepts agents.max_threads as a legacy alias for the canonical
+# concurrency key. Treat both spellings as one managed identity so an existing
+# legacy setting is replaced instead of leaving Codex to load both fields.
+LEGACY_KEY_ALIASES = {
+    ("agents", "max_threads"): (
+        "agents",
+        "max_concurrent_threads_per_session",
+    ),
+}  # type: Dict[Key, Key]
+
 
 def _managed_keys() -> set[Key]:
     return set(RECOMMENDED_SETTINGS) | EVIDENCE_SCOUT_DYNAMIC_KEYS
+
+
+def _canonical_key(key: Key) -> Key:
+    return LEGACY_KEY_ALIASES.get(key, key)
+
+
+def _canonical_key_text(assignment: "_Assignment", key: Key) -> str:
+    if assignment.key_text == assignment.path[-1]:
+        return key[-1]
+    return ".".join(key)
+
 
 _SECTION_RE = re.compile(r"^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$")
 _ASSIGNMENT_RE = re.compile(
@@ -211,17 +232,18 @@ def current_values(text: str) -> Dict[Key, str]:
     _, assignments, _ = _parse_assignments(text)
     found = {}  # type: Dict[Key, str]
     for assignment in assignments:
-        if assignment.path in _managed_keys():
-            if assignment.path in found:
+        key = _canonical_key(assignment.path)
+        if key in _managed_keys():
+            if key in found:
                 raise StateError(
                     "duplicate managed Codex config key: {}".format(
-                        ".".join(assignment.path)
+                        ".".join(key)
                     ),
                     host="codex",
                     stage="configure",
                     operation="parse-config",
                 )
-            found[assignment.path] = assignment.value
+            found[key] = assignment.value
         elif any(
             key[: len(assignment.path)] == assignment.path
             for key in _managed_keys()
@@ -260,9 +282,10 @@ def update_config(text: str, settings: Mapping[Key, str]) -> str:
     replacements = {}  # type: Dict[int, Tuple[int, str]]
     present = set()  # type: set[Key]
     for assignment in assignments:
-        if assignment.path not in settings:
+        key = _canonical_key(assignment.path)
+        if key not in settings:
             continue
-        present.add(assignment.path)
+        present.add(key)
         original_lines = lines[assignment.start:assignment.end]
         comments = [
             comment
@@ -284,8 +307,8 @@ def update_config(text: str, settings: Mapping[Key, str]) -> str:
             "{}{}{} = {}{}{}".format(
                 prefix,
                 assignment.indent,
-                assignment.key_text,
-                settings[assignment.path],
+                _canonical_key_text(assignment, key),
+                settings[key],
                 suffix,
                 newline,
             ),

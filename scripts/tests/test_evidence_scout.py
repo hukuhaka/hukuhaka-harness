@@ -104,6 +104,30 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
             values[("model_catalog_json",)],
         )
 
+    def test_install_migrates_legacy_agent_limit(self) -> None:
+        config = self.codex_home / "config.toml"
+        original = (
+            "[agents]\n"
+            "max_threads = 9 # legacy alias\n"
+            'default_subagent_model = "user-model"\n'
+        )
+        config.write_text(original, encoding="utf-8")
+
+        with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
+            self.deployment().deploy()
+
+        migrated = config.read_text(encoding="utf-8")
+        self.assertIn(
+            "max_concurrent_threads_per_session = 4 # legacy alias\n",
+            migrated,
+        )
+        self.assertNotIn("\nmax_threads =", migrated)
+        self.assertIn('default_subagent_model = "user-model"\n', migrated)
+        self.assertEqual(
+            original.encode(),
+            self.deployment().config.backup.read_bytes(),
+        )
+
     def test_catalog_changes_only_luna_multi_agent_version(self) -> None:
         with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
             self.deployment().deploy()

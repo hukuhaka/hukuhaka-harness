@@ -167,7 +167,13 @@ elif [ "${1:-}" = "plugin" ] && [ "${2:-}" = "remove" ]; then
     rm -rf "$CODEX_HOME/plugins/cache/hukuhaka-harness/$name"
     printf '{}\n'
 elif [ "${1:-}" = "doctor" ] && [ "${2:-}" = "--json" ]; then
-    printf '{"checks":{"config.load":{"status":"ok","summary":"config loaded"}}}\n'
+    config="$CODEX_HOME/config.toml"
+    if grep -Eq '^[[:space:]]*(agents\.)?max_threads[[:space:]]*=' "$config" && \
+       grep -Eq '^[[:space:]]*(agents\.)?max_concurrent_threads_per_session[[:space:]]*=' "$config"; then
+        printf '{"checks":{"config.load":{"status":"warning","summary":"config loaded","details":{"startup warning":"Ignoring malformed agent role definition: duplicate field `max_concurrent_threads_per_session`"}}}}\n'
+    else
+        printf '{"checks":{"config.load":{"status":"ok","summary":"config loaded"}}}\n'
+    fi
 else
     printf 'unexpected fake codex args: %s\n' "$*" >&2
     exit 2
@@ -316,6 +322,37 @@ fi
         self.assertEqual(0, second_remove.returncode, second_remove.stderr)
         self.assertEqual("", (state / "plugins").read_text(encoding="utf-8"))
 
+    def test_fake_codex_migrates_legacy_agent_limit_before_doctor(self) -> None:
+        state, codex_home = self._install_fake_codex()
+        config_path = codex_home / "config.toml"
+        original = (
+            "[agents]\n"
+            "max_threads = 4 # legacy alias\n"
+            'default_subagent_model = "user-model"\n'
+        )
+        config_path.write_text(original, encoding="utf-8")
+        environment = self._environment(
+            CODEX_HOME=str(codex_home),
+            FAKE_CODEX_STATE=str(state),
+            FAKE_SOURCE_ROOT=str(ROOT),
+        )
+
+        result = self._run(
+            ("codex", "install", "--recommended", "--yes"),
+            environment=environment,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertRegex(result.stdout, r"  Codex: +success")
+        config = config_path.read_text(encoding="utf-8")
+        self.assertNotRegex(config, r"(?m)^\s*(?:agents\.)?max_threads\s*=")
+        self.assertEqual(1, config.count("max_concurrent_threads_per_session = 4"))
+        self.assertIn('default_subagent_model = "user-model"', config)
+        self.assertEqual(
+            original.encode(),
+            (codex_home / "config.toml.hukuhaka-backup").read_bytes(),
+        )
+
     def test_codex_live_install_smoke_with_local_source(self) -> None:
         result = subprocess.run(
             (
@@ -343,6 +380,12 @@ fi
         codex_home = self.temp / "real-codex-home"
         codex_home.mkdir()
         shutil.copy2(live_cache, codex_home / "models_cache.json")
+        (codex_home / "config.toml").write_text(
+            "[agents]\n"
+            "max_threads = 4 # legacy alias\n"
+            'default_subagent_model = "user-model"\n',
+            encoding="utf-8",
+        )
         environment = os.environ.copy()
         environment.update({"HOME": str(self.home), "CODEX_HOME": str(codex_home)})
         arguments = ("codex", "install", "--recommended", "--yes")
@@ -356,6 +399,10 @@ fi
         self.assertEqual(0, second.returncode, second.stderr)
         self.assertEqual(0, first_remove.returncode, first_remove.stderr)
         self.assertEqual(0, second_remove.returncode, second_remove.stderr)
+        config = (codex_home / "config.toml").read_text(encoding="utf-8")
+        self.assertNotRegex(config, r"(?m)^\s*(?:agents\.)?max_threads\s*=")
+        self.assertEqual(1, config.count("max_concurrent_threads_per_session = 4"))
+        self.assertIn('default_subagent_model = "user-model"', config)
 
 
 if __name__ == "__main__":

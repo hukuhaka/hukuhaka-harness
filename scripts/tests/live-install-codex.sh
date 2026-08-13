@@ -104,7 +104,13 @@ elif [ "${1:-}" = "plugin" ] && [ "${2:-}" = "remove" ]; then
     rm -rf "$CODEX_HOME/plugins/cache/hukuhaka-harness/$name"
     printf '{}\n'
 elif [ "${1:-}" = "doctor" ] && [ "${2:-}" = "--json" ]; then
-    printf '{"checks":{"config.load":{"status":"ok","summary":"config loaded"}}}\n'
+    config="$CODEX_HOME/config.toml"
+    if grep -Eq '^[[:space:]]*(agents\.)?max_threads[[:space:]]*=' "$config" && \
+       grep -Eq '^[[:space:]]*(agents\.)?max_concurrent_threads_per_session[[:space:]]*=' "$config"; then
+        printf '{"checks":{"config.load":{"status":"warning","summary":"config loaded","details":{"startup warning":"Ignoring malformed agent role definition: duplicate field `max_concurrent_threads_per_session`"}}}}\n'
+    else
+        printf '{"checks":{"config.load":{"status":"ok","summary":"config loaded"}}}\n'
+    fi
 else
     printf 'unexpected fake codex args: %s\n' "$*" >&2
     exit 2
@@ -143,6 +149,12 @@ export FAKE_CODEX_STATE="$SMOKE_ROOT/state"
 export FAKE_SOURCE_ROOT="$SOURCE_ROOT"
 export PATH="$SMOKE_ROOT/bin:$PATH"
 
+cat > "$CODEX_HOME/config.toml" <<'TOML'
+[agents]
+max_threads = 4 # legacy alias
+default_subagent_model = "user-model"
+TOML
+
 run_install() {
     if [ -n "$SOURCE_DIR" ]; then
         "${INSTALL_COMMAND[@]}"
@@ -167,6 +179,7 @@ grep -Fq "concurrency ceiling 4" <<<"$second_output"
 python3 - "$CODEX_HOME" "$SMOKE_ROOT/source-models-cache.json" "$EXPECTED_VERSION" <<'PY'
 import json
 import pathlib
+import re
 import sys
 
 root = pathlib.Path(sys.argv[1])
@@ -213,6 +226,16 @@ for expected_line in (
         raise SystemExit("missing config setting: {}".format(expected_line))
 if config.index(pointer) > config.index("[features]"):
     raise SystemExit("model_catalog_json is not top-level")
+if re.search(r"(?m)^\s*(?:agents\.)?max_threads\s*=", config):
+    raise SystemExit("legacy agents.max_threads was not migrated")
+if config.count("max_concurrent_threads_per_session = 4") != 1:
+    raise SystemExit("canonical concurrency setting is not present exactly once")
+if 'default_subagent_model = "user-model"' not in config:
+    raise SystemExit("unmanaged agent default was not preserved")
+
+backup = (root / "config.toml.hukuhaka-backup").read_text(encoding="utf-8")
+if "max_threads = 4 # legacy alias" not in backup:
+    raise SystemExit("legacy pre-migration config was not backed up")
 PY
 
 printf 'Codex Evidence Scout live install verified for v%s\n' "$EXPECTED_VERSION"

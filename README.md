@@ -190,7 +190,9 @@ the original file is restored. See the
 [Codex configuration reference](https://developers.openai.com/codex/config-reference/).
 Evidence Scout installation reuses the same parser, preservation rules, and
 `codex doctor` validation for its three required runtime keys; users do not
-need to run `codex configure` separately.
+need to run `codex configure` separately. Existing `agents.max_threads` values
+are migrated to `agents.max_concurrent_threads_per_session` before validation;
+configs that already contain both aliases are rejected as ambiguous.
 
 ## Report planner workflow
 

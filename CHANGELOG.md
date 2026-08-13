@@ -7,6 +7,16 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.12] — 2026-08-13
+
+### Fixed
+
+- Codex recommended installs now migrate the legacy `agents.max_threads`
+  setting before adding the canonical concurrency limit, preventing Evidence
+  Scout installation from failing Doctor validation with a duplicate-field
+  warning. Unrelated agent settings, comments, backups, and rollback behavior
+  remain preserved.
+
 ## [1.1.11] — 2026-08-13
 
 ### Added
