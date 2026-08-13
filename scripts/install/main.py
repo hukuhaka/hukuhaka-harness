@@ -306,6 +306,8 @@ class Installer:
                 print("  Reset template: yes")
             if plan.configure_codex:
                 print("  Global config:  update")
+            if plan.host == "codex" and "evidence-scout" in desired:
+                print("  Agent runtime:  multi-agent enabled; concurrency ceiling 4")
             print("")
         if config_plan is not None:
             if config_plan.changed:

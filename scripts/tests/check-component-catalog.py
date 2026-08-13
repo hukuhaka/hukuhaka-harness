@@ -42,7 +42,13 @@ def validate(root: Path, catalog: dict) -> int:
             errors.append(f"{name}: aliases must be an array of non-empty strings")
             component_aliases = []
         aliases.extend(component_aliases)
-        if component.get("kind") not in {"plugin", "skill", "feature", "template"}:
+        if component.get("kind") not in {
+            "plugin",
+            "skill",
+            "feature",
+            "template",
+            "agent",
+        }:
             errors.append(f"{name}: unsupported kind")
         if component.get("lifecycle") not in {"supported", "deprecated"}:
             errors.append(f"{name}: unsupported lifecycle")
@@ -78,6 +84,9 @@ def validate(root: Path, catalog: dict) -> int:
         path_value = component.get("path")
         if path_value and not (root / path_value).is_file():
             errors.append(f"{name}: missing path {path_value}")
+        routing_path = component.get("routingPath")
+        if routing_path and not (root / routing_path).is_file():
+            errors.append(f"{name}: missing routingPath {routing_path}")
 
     identities = [str(name) for name in names] + aliases
     if len(identities) != len(set(identities)):

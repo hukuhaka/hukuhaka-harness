@@ -20,6 +20,7 @@ imply that a Claude Code plugin is portable to Codex.
 | **hukuhaka-codex** | `0.4.0` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
 | **CLAUDE.md template** | — | Supported | Claude Code only | Shared scoped-change and verification policy with Claude-specific `spec.md` sign-off and attribution-free commits, deployed to `~/.claude/CLAUDE.md`. |
 | **AGENTS.md template** | — | Supported | Codex only | Codex policy for scoped change previews, evidence-backed verification, compact-resilient task state, and a safe local Git lifecycle, merged into `$CODEX_HOME/AGENTS.md`. |
+| **Evidence Scout** | — | Supported | Codex only | Installs a Luna max, read-only custom agent plus compact routing guidance for dynamic parallel repository exploration while the primary retains decisions, writes, and final verification. |
 
 ## Install
 
@@ -78,8 +79,12 @@ plugin's currently registered version with that target. Templates and features
 remain unversioned.
 
 Codex also offers an opt-in `Configure global Codex defaults` choice. It is
-unchecked by default. Reset and uninstall never modify Codex `config.toml`,
-memory, or unrelated Claude settings.
+unchecked by default. Selecting Evidence Scout applies only its required
+multi-agent enablement, concurrency ceiling, and Luna v2 child-model
+compatibility catalog during normal install; it does not change the primary
+model or unrelated agent defaults. Reset and uninstall never modify Codex
+`config.toml`, memory, or unrelated Claude settings. The compatibility catalog
+therefore persists with its config pointer after removal.
 
 The interactive command uses `bash -c` so stdin remains attached to the
 terminal. `curl ... | bash` remains supported for explicit non-interactive
@@ -119,6 +124,21 @@ Codex has the same component lifecycle:
 ./scripts/install.sh codex uninstall --yes
 ```
 
+`--recommended` includes Evidence Scout. The same install creates
+`$CODEX_HOME/agents/evidence-scout.toml`, merges a separately owned routing
+block into `$CODEX_HOME/AGENTS.md`, enables multi-agent execution, and sets the
+simultaneous concurrency ceiling to four. It leaves `models_cache.json`
+untouched, derives `models-luna-v2.json` by changing only Luna's
+`multi_agent_version` to `v2`, and points the top-level `model_catalog_json`
+setting at that generated file. Invalid or ambiguous source caches fail before
+managed writes. The ceiling is capacity, not a fixed number of scouts: Codex
+uses one scout per genuinely independent read-only scope and may use fewer. An
+existing byte-identical personal scout is adopted; a conflicting unmanaged
+file or model-catalog pointer is preserved unless `--force` is explicit.
+If `$CODEX_HOME/AGENTS.override.md` exists, Codex gives it precedence over the
+global `AGENTS.md`; installation succeeds but warns that scout routing is
+inactive until that override is removed or carries equivalent routing guidance.
+
 Remote installs keep the marketplace pinned to the resolved harness release.
 When the same official Git marketplace is registered at an older release, the
 installer replaces that ref automatically and restores the previous commit if
@@ -149,9 +169,8 @@ The Codex marketplace intentionally exposes only the components with native
 Codex packaging. Invoke the document planner as `$hukuhaka-report-planner`, the
 engineering planner as `$engineering-plan`, and the worklog as
 `$hukuhaka-worklog:worklog`, or let Codex select them from their descriptions.
-The `agents-md` template is
-installed by this repository's host-aware installer rather than the native
-plugin marketplace.
+The `agents-md` template and Evidence Scout are installed by this repository's
+host-aware installer rather than the native plugin marketplace.
 
 ### Global Codex defaults
 
@@ -169,6 +188,9 @@ managed keys and inline managed tables are rejected before writing. After an
 atomic replacement, `codex doctor --json` must report `config.load` as `ok` or
 the original file is restored. See the
 [Codex configuration reference](https://developers.openai.com/codex/config-reference/).
+Evidence Scout installation reuses the same parser, preservation rules, and
+`codex doctor` validation for its three required runtime keys; users do not
+need to run `codex configure` separately.
 
 ## Report planner workflow
 

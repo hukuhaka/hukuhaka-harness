@@ -30,6 +30,8 @@ DESIGNER_AGENT = PLANNER / "agents" / "artifact-designer.md"
 BUILD_HANDOFF = PLANNER / "skills" / "hukuhaka-report-planner" / "references" / "build-handoff.md"
 CLAUDE_TEMPLATE = ROOT / "templates" / "CLAUDE.md"
 AGENTS_TEMPLATE = ROOT / "templates" / "AGENTS.md"
+EVIDENCE_SCOUT = ROOT / "agents" / "evidence-scout.toml"
+EVIDENCE_SCOUT_ROUTING = ROOT / "templates" / "evidence-scout-routing.md"
 
 
 def load_json(path: Path) -> dict:
@@ -66,6 +68,8 @@ def main() -> int:
         BUILD_HANDOFF,
         CLAUDE_TEMPLATE,
         AGENTS_TEMPLATE,
+        EVIDENCE_SCOUT,
+        EVIDENCE_SCOUT_ROUTING,
     ):
         require(path.is_file(), f"missing required dual-host file: {path.relative_to(ROOT)}", errors)
     if errors:
@@ -88,6 +92,8 @@ def main() -> int:
     build_handoff = BUILD_HANDOFF.read_text(encoding="utf-8")
     claude_template = CLAUDE_TEMPLATE.read_text(encoding="utf-8")
     agents_template = AGENTS_TEMPLATE.read_text(encoding="utf-8")
+    evidence_scout = EVIDENCE_SCOUT.read_text(encoding="utf-8")
+    evidence_scout_routing = EVIDENCE_SCOUT_ROUTING.read_text(encoding="utf-8")
 
     require(claude.get("name") == codex.get("name"), "Claude and Codex manifest names differ", errors)
     require(claude.get("version") == codex.get("version"), "Claude and Codex manifest versions differ", errors)
@@ -124,6 +130,17 @@ def main() -> int:
     require(catalog_check.returncode == 0, catalog_check.stderr.strip() or "component catalog validation failed", errors)
 
     components = {component["name"]: component for component in catalog.get("components", [])}
+    scout_component = components.get("evidence-scout", {})
+    require(scout_component.get("kind") == "agent",
+            "evidence-scout must be catalogued as an agent", errors)
+    require(scout_component.get("default") is True,
+            "evidence-scout must be selected by recommended installs", errors)
+    require(set(scout_component.get("hosts", {})) == {"codex"},
+            "evidence-scout must be Codex-only", errors)
+    require(scout_component.get("path") == "agents/evidence-scout.toml",
+            "evidence-scout catalog source differs", errors)
+    require(scout_component.get("routingPath") == "templates/evidence-scout-routing.md",
+            "evidence-scout routing source differs", errors)
     expected_codex = {
         name for name, component in components.items()
         if component.get("kind") == "plugin"
@@ -267,6 +284,23 @@ def main() -> int:
     require(attribution_rule not in agents_template,
             "AGENTS.md template contains the Claude-only attribution rule", errors)
 
+    for contract in (
+        'model = "gpt-5.6-luna"',
+        'model_reasoning_effort = "max"',
+        'sandbox_mode = "read-only"',
+        "evidence_packet.v1",
+        "When all supplied IDs are closed, stop immediately",
+    ):
+        require(contract in evidence_scout,
+                f"evidence-scout contract is missing: {contract}", errors)
+    for contract in (
+        "as many as are useful within the concurrency ceiling",
+        "fork_turns=\"none\"",
+        "final verification in the primary agent",
+    ):
+        require(contract in evidence_scout_routing,
+                f"evidence-scout routing is missing: {contract}", errors)
+
     require(not (ROOT / "skills" / "hukuhaka-team" / "SKILL.md").exists(), "removed hukuhaka-team skill still exists", errors)
     team_refs = list((ROOT / "eval").rglob("TEAM-*.json"))
     require(not team_refs, "removed TEAM eval scenarios still exist", errors)
@@ -289,6 +323,8 @@ def main() -> int:
             "README does not mark hukuhaka-codex Claude-only", errors)
     require("| Supported | Claude Code, Codex |" in readme_row(readme, "hukuhaka-worklog"),
             "README does not mark hukuhaka-worklog dual-host", errors)
+    require("| Supported | Codex only |" in readme_row(readme, "Evidence Scout"),
+            "README does not mark Evidence Scout Codex-only", errors)
 
     if errors:
         return report(errors)

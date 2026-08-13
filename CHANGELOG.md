@@ -7,6 +7,15 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.11] — 2026-08-13
+
+### Added
+
+- Added the recommended Codex **Evidence Scout** component. One normal
+  `codex install --recommended` now installs the verified Luna max, read-only
+  agent, its compact dynamic-routing guidance, and required multi-agent runtime
+  settings without changing the primary model or unrelated agent defaults.
+
 ## [1.1.10] — 2026-08-11
 
 ### Changed

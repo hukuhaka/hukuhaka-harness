@@ -79,6 +79,7 @@ fi
         archive = temp / "release.tar.gz"
         public_sources = (
             ROOT / ".agents",
+            ROOT / "agents",
             ROOT / "marketplace",
             ROOT / "templates",
             ROOT / "components.json",

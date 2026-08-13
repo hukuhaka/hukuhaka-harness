@@ -81,6 +81,18 @@
       }
     },
     {
+      "name": "evidence-scout",
+      "kind": "agent",
+      "lifecycle": "supported",
+      "default": true,
+      "description": "Luna max read-only evidence scout with dynamic routing",
+      "path": "agents/evidence-scout.toml",
+      "routingPath": "templates/evidence-scout-routing.md",
+      "hosts": {
+        "codex": {}
+      }
+    },
+    {
       "name": "agent-teams",
       "kind": "feature",
       "lifecycle": "supported",

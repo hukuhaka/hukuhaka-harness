@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import stat
 import shutil
 import subprocess
 import tempfile
@@ -1203,9 +1204,11 @@ class CodexGuidanceTests(unittest.TestCase):
     def test_install_and_uninstall_preserve_user_text(self) -> None:
         target = self.codex_home / "AGENTS.md"
         target.write_text("# User\n")
+        target.chmod(0o640)
         self.deployment().deploy()
         self.assertIn("# User", target.read_text())
         self.assertIn("# Managed", target.read_text())
+        self.assertEqual(0o640, stat.S_IMODE(target.stat().st_mode))
         CodexGuidanceDeployment(
             self.source,
             self.codex_home,
@@ -1213,6 +1216,7 @@ class CodexGuidanceTests(unittest.TestCase):
             enabled=False,
         ).uninstall()
         self.assertEqual("# User\n", target.read_text())
+        self.assertEqual(0o640, stat.S_IMODE(target.stat().st_mode))
 
     def test_deploy_recovers_an_interrupted_codex_transaction(self) -> None:
         self.deployment().deploy()

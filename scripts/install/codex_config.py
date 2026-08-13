@@ -25,6 +25,7 @@ RECOMMENDED_SETTINGS = {
     ("model_verbosity",): '"low"',
     ("agents", "enabled"): "true",
     ("agents", "max_concurrent_threads_per_session"): "4",
+    ("features", "multi_agent"): "true",
     (
         "tui",
         "status_line",
@@ -34,6 +35,22 @@ RECOMMENDED_SETTINGS = {
     ("tui", "notification_condition"): '"unfocused"',
     ("features", "prevent_idle_sleep"): "true",
 }  # type: Dict[Key, str]
+
+# Installing the named evidence scout must make that component runnable without
+# also changing the user's primary model or the defaults for unrelated agents.
+EVIDENCE_SCOUT_SETTINGS = {
+    ("features", "multi_agent"): "true",
+    ("agents", "enabled"): "true",
+    ("agents", "max_concurrent_threads_per_session"): "4",
+}  # type: Dict[Key, str]
+
+# The evidence-scout installer also manages this dynamic top-level key. Its
+# value depends on CODEX_HOME, so it cannot live in RECOMMENDED_SETTINGS.
+EVIDENCE_SCOUT_DYNAMIC_KEYS = {("model_catalog_json",)}
+
+
+def _managed_keys() -> set[Key]:
+    return set(RECOMMENDED_SETTINGS) | EVIDENCE_SCOUT_DYNAMIC_KEYS
 
 _SECTION_RE = re.compile(r"^\s*\[([A-Za-z0-9_.-]+)\]\s*(?:#.*)?$")
 _ASSIGNMENT_RE = re.compile(
@@ -194,7 +211,7 @@ def current_values(text: str) -> Dict[Key, str]:
     _, assignments, _ = _parse_assignments(text)
     found = {}  # type: Dict[Key, str]
     for assignment in assignments:
-        if assignment.path in RECOMMENDED_SETTINGS:
+        if assignment.path in _managed_keys():
             if assignment.path in found:
                 raise StateError(
                     "duplicate managed Codex config key: {}".format(
@@ -207,7 +224,7 @@ def current_values(text: str) -> Dict[Key, str]:
             found[assignment.path] = assignment.value
         elif any(
             key[: len(assignment.path)] == assignment.path
-            for key in RECOMMENDED_SETTINGS
+            for key in _managed_keys()
         ):
             raise StateError(
                 "managed Codex config table uses an inline value: {}".format(
@@ -229,7 +246,7 @@ def _section_end(lines: Sequence[str], start: int) -> int:
 
 
 def update_config(text: str, settings: Mapping[Key, str]) -> str:
-    unknown = [key for key in settings if key not in RECOMMENDED_SETTINGS]
+    unknown = [key for key in settings if key not in _managed_keys()]
     if unknown:
         raise StateError(
             "unsupported managed Codex config key: {}".format(".".join(unknown[0])),

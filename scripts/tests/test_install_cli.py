@@ -95,6 +95,21 @@ exit 0
         codex_home = self.temp / "codex-home"
         state.mkdir()
         codex_home.mkdir()
+        (codex_home / "models_cache.json").write_text(
+            json.dumps(
+                {
+                    "models": [
+                        {
+                            "slug": "gpt-5.6-luna",
+                            "multi_agent_version": "v1",
+                            "display_name": "GPT-5.6-Luna",
+                        }
+                    ]
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         self._write_executable(
             "codex",
             """#!/bin/bash
@@ -151,6 +166,8 @@ elif [ "${1:-}" = "plugin" ] && [ "${2:-}" = "remove" ]; then
     mv "$next" "$plugins"
     rm -rf "$CODEX_HOME/plugins/cache/hukuhaka-harness/$name"
     printf '{}\n'
+elif [ "${1:-}" = "doctor" ] && [ "${2:-}" = "--json" ]; then
+    printf '{"checks":{"config.load":{"status":"ok","summary":"config loaded"}}}\n'
 else
     printf 'unexpected fake codex args: %s\n' "$*" >&2
     exit 2
@@ -223,6 +240,8 @@ fi
         self.assertEqual(0, dry_run.returncode, dry_run.stderr)
         self.assertIn("plugin add hukuhaka-report-planner@hukuhaka-harness", dry_run.stdout)
         self.assertIn("plugin add hukuhaka-worklog@hukuhaka-harness", dry_run.stdout)
+        self.assertIn("install evidence-scout", dry_run.stdout)
+        self.assertIn("concurrency ceiling 4", dry_run.stdout)
         self.assertFalse((state / "marketplace").exists())
         self.assertEqual("", (state / "plugins").read_text(encoding="utf-8"))
 
@@ -248,6 +267,27 @@ fi
             set((state / "plugins").read_text(encoding="utf-8").splitlines()),
         )
         self.assertTrue((codex_home / ".hukuhaka-guidance-manifest.json").is_file())
+        self.assertTrue((codex_home / ".hukuhaka-evidence-scout-manifest.json").is_file())
+        self.assertTrue((codex_home / "agents" / "evidence-scout.toml").is_file())
+        self.assertEqual(
+            "v2",
+            json.loads(
+                (codex_home / "models-luna-v2.json").read_text(encoding="utf-8")
+            )["models"][0]["multi_agent_version"],
+        )
+        self.assertIn(
+            "hukuhaka-evidence-scout:begin",
+            (codex_home / "AGENTS.md").read_text(encoding="utf-8"),
+        )
+        config = (codex_home / "config.toml").read_text(encoding="utf-8")
+        self.assertIn("multi_agent = true", config)
+        self.assertIn("max_concurrent_threads_per_session = 4", config)
+        self.assertIn(
+            'model_catalog_json = {}'.format(
+                json.dumps(str(codex_home / "models-luna-v2.json"))
+            ),
+            config,
+        )
 
         reduced = self._run(
             (
@@ -265,6 +305,10 @@ fi
             (state / "plugins").read_text(encoding="utf-8").splitlines(),
         )
         self.assertFalse((codex_home / ".hukuhaka-guidance-manifest.json").exists())
+        self.assertFalse((codex_home / ".hukuhaka-evidence-scout-manifest.json").exists())
+        self.assertFalse((codex_home / "agents" / "evidence-scout.toml").exists())
+        self.assertTrue((codex_home / "models-luna-v2.json").is_file())
+        self.assertIn("model_catalog_json", (codex_home / "config.toml").read_text())
 
         first_remove = self._run(("codex", "uninstall", "--yes"), environment=environment)
         second_remove = self._run(("codex", "uninstall", "--yes"), environment=environment)
@@ -272,10 +316,33 @@ fi
         self.assertEqual(0, second_remove.returncode, second_remove.stderr)
         self.assertEqual("", (state / "plugins").read_text(encoding="utf-8"))
 
+    def test_codex_live_install_smoke_with_local_source(self) -> None:
+        result = subprocess.run(
+            (
+                "/bin/bash",
+                str(ROOT / "scripts" / "tests" / "live-install-codex.sh"),
+                VERSION,
+                str(ROOT),
+            ),
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn(
+            "Codex Evidence Scout live install verified for v{}".format(VERSION),
+            result.stdout,
+        )
+
     @unittest.skipUnless(shutil.which("codex"), "codex CLI not available")
     def test_installed_codex_cli_temp_home_lifecycle(self) -> None:
+        live_cache = Path.home() / ".codex" / "models_cache.json"
+        if not live_cache.is_file():
+            self.skipTest("live Codex model cache not available")
         codex_home = self.temp / "real-codex-home"
         codex_home.mkdir()
+        shutil.copy2(live_cache, codex_home / "models_cache.json")
         environment = os.environ.copy()
         environment.update({"HOME": str(self.home), "CODEX_HOME": str(codex_home)})
         arguments = ("codex", "install", "--recommended", "--yes")

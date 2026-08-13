@@ -57,6 +57,10 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Run the documented explicit Claude installer
         shell: bash
         run: |
@@ -90,6 +94,7 @@ jobs:
               plugins.append(item)
           print(json.dumps(plugins))
           PY
+
           fi
           exit 0
           SH
@@ -117,6 +122,10 @@ jobs:
                   )
               )
           PY
+
+      - name: Run the documented explicit Codex installer
+        shell: bash
+        run: scripts/tests/live-install-codex.sh "${GITHUB_REF_NAME#v}"
 
   publish-release:
     name: Publish GitHub Release

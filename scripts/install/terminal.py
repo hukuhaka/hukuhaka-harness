@@ -126,6 +126,11 @@ def _render(
                 and version
             ):
                 descriptor = "{} {}".format(descriptor, version)
+            elif component.get("kind") == "agent":
+                description = str(component.get("description", "")).strip()
+                descriptor = "agent{}".format(
+                    ": " + description if description else ""
+                )
             output.write(
                 "{}    [{}] {} ({}){}\n".format(
                     marker,
