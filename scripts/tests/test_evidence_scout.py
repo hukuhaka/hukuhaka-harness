@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -8,46 +9,25 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Optional
 from unittest import mock
 
 from scripts.install.codex import (
     EVIDENCE_SCOUT_MANIFEST,
     CodexEvidenceScoutDeployment,
     CodexInstaller,
+    _scout_block,
 )
-from scripts.install.codex_config import EVIDENCE_SCOUT_SETTINGS, current_values
-from scripts.install.common import DriftError, InstallerError, StateError
+from scripts.install.codex_config import (
+    EVIDENCE_SCOUT_SETTINGS,
+    current_values,
+    update_config,
+)
+from scripts.install.common import DriftError, InstallerError
 from scripts.install.terminal import prompt_install_plan
 
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-MODEL_CACHE = {
-    "client_version": "0.147.0",
-    "etag": "test-etag",
-    "fetched_at": "2026-08-12T00:00:00Z",
-    "models": [
-        {
-            "slug": "gpt-5.6-sol",
-            "multi_agent_version": "v2",
-            "display_name": "GPT-5.6-Sol",
-        },
-        {
-            "slug": "gpt-5.6-luna",
-            "multi_agent_version": "v1",
-            "display_name": "GPT-5.6-Luna",
-            "supported_reasoning_levels": ["high", "max"],
-        },
-    ],
-}
-
-
-def write_model_cache(codex_home: Path, payload: object = MODEL_CACHE) -> bytes:
-    codex_home.mkdir(parents=True, exist_ok=True)
-    content = (json.dumps(payload, separators=(",", ":")) + "\n").encode("utf-8")
-    (codex_home / "models_cache.json").write_bytes(content)
-    return content
 
 
 class EvidenceScoutDeploymentTests(unittest.TestCase):
@@ -56,7 +36,7 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
         self.codex_home = Path(self.temp.name) / ".codex"
         self.source = ROOT / "agents" / "evidence-scout.toml"
         self.routing = ROOT / "templates" / "evidence-scout-routing.md"
-        self.original_cache = write_model_cache(self.codex_home)
+        self.codex_home.mkdir(parents=True)
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -71,12 +51,46 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
             force=force,
         )
 
-    def assert_no_managed_scout_write(self) -> None:
-        self.assertFalse((self.codex_home / "agents").exists())
-        self.assertFalse((self.codex_home / "AGENTS.md").exists())
-        self.assertFalse((self.codex_home / "config.toml").exists())
-        self.assertFalse((self.codex_home / "models-luna-v2.json").exists())
-        self.assertFalse((self.codex_home / EVIDENCE_SCOUT_MANIFEST).exists())
+    def seed_legacy_v2(
+        self,
+        *,
+        pointer: Optional[str] = None,
+        catalog: bytes = b'{"legacy":"luna-v2"}\n',
+    ) -> None:
+        agent = self.codex_home / "agents" / "evidence-scout.toml"
+        agent.parent.mkdir(parents=True, exist_ok=True)
+        agent.write_bytes(self.source.read_bytes())
+        block = _scout_block(self.routing.read_bytes())
+        (self.codex_home / "AGENTS.md").write_bytes(block + b"\n")
+        if catalog:
+            (self.codex_home / "models-luna-v2.json").write_bytes(catalog)
+        owned_pointer = json.dumps(str(self.codex_home / "models-luna-v2.json"))
+        config = update_config(
+            "",
+            {
+                **EVIDENCE_SCOUT_SETTINGS,
+                ("model_catalog_json",): pointer or owned_pointer,
+            },
+        )
+        (self.codex_home / "config.toml").write_text(config, encoding="utf-8")
+        manifest = {
+            "schemaVersion": 2,
+            "component": "evidence-scout",
+            "version": "1.1.10",
+            "agentTarget": "agents/evidence-scout.toml",
+            "agentHash": hashlib.sha256(self.source.read_bytes()).hexdigest(),
+            "routingTarget": "AGENTS.md",
+            "routingHash": hashlib.sha256(block).hexdigest(),
+            "catalogSource": "models_cache.json",
+            "catalogSourceHash": "legacy-source-hash",
+            "catalogTarget": "models-luna-v2.json",
+            "catalogHash": hashlib.sha256(catalog).hexdigest(),
+            "prefix": "",
+            "suffix": "\n",
+        }
+        (self.codex_home / EVIDENCE_SCOUT_MANIFEST).write_text(
+            json.dumps(manifest), encoding="utf-8"
+        )
 
     def test_install_is_complete_and_idempotent(self) -> None:
         with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
@@ -99,10 +113,19 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
         )
         for key, expected in EVIDENCE_SCOUT_SETTINGS.items():
             self.assertEqual(expected, values[key])
-        self.assertEqual(
-            json.dumps(str(self.codex_home / "models-luna-v2.json")),
-            values[("model_catalog_json",)],
+        self.assertNotIn(("model_catalog_json",), values)
+        manifest = json.loads(
+            (self.codex_home / EVIDENCE_SCOUT_MANIFEST).read_text(encoding="utf-8")
         )
+        self.assertEqual(3, manifest["schemaVersion"])
+        self.assertNotIn("catalogTarget", manifest)
+
+    def test_fresh_install_does_not_require_or_create_model_catalog(self) -> None:
+        with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
+            self.deployment().deploy()
+
+        self.assertFalse((self.codex_home / "models_cache.json").exists())
+        self.assertFalse((self.codex_home / "models-luna-v2.json").exists())
 
     def test_install_migrates_legacy_agent_limit(self) -> None:
         config = self.codex_home / "config.toml"
@@ -128,92 +151,40 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
             self.deployment().config.backup.read_bytes(),
         )
 
-    def test_catalog_changes_only_luna_multi_agent_version(self) -> None:
-        with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
-            self.deployment().deploy()
-
-        self.assertEqual(
-            self.original_cache, (self.codex_home / "models_cache.json").read_bytes()
-        )
-        source = json.loads(self.original_cache)
-        expected = json.loads(self.original_cache)
-        luna = [model for model in expected["models"] if model["slug"] == "gpt-5.6-luna"]
-        self.assertEqual(1, len(luna))
-        luna[0]["multi_agent_version"] = "v2"
-        actual = json.loads(
-            (self.codex_home / "models-luna-v2.json").read_text(encoding="utf-8")
-        )
-        self.assertEqual(expected, actual)
-        self.assertNotEqual(source, actual)
-
-        config = (self.codex_home / "config.toml").read_text(encoding="utf-8")
-        pointer = 'model_catalog_json = {}'.format(
-            json.dumps(str(self.codex_home / "models-luna-v2.json"))
-        )
-        self.assertIn(pointer, config)
-        self.assertLess(config.index(pointer), config.index("[features]"))
-
-    def test_invalid_cache_fails_before_any_managed_write(self) -> None:
-        (self.codex_home / "models_cache.json").write_text(
-            '{"models": []}\n', encoding="utf-8"
-        )
-
-        with self.assertRaisesRegex(StateError, "exactly one gpt-5.6-luna"):
-            self.deployment().deploy()
-
-        self.assert_no_managed_scout_write()
-
-    def test_malformed_cache_fails_before_any_managed_write(self) -> None:
-        (self.codex_home / "models_cache.json").write_text("{\n", encoding="utf-8")
-
-        with self.assertRaisesRegex(StateError, "must contain valid JSON"):
-            self.deployment().deploy()
-
-        self.assert_no_managed_scout_write()
-
-    def test_duplicate_luna_cache_fails_before_any_managed_write(self) -> None:
-        payload = json.loads(json.dumps(MODEL_CACHE))
-        luna = next(
-            model for model in payload["models"] if model["slug"] == "gpt-5.6-luna"
-        )
-        payload["models"].append(dict(luna))
-        write_model_cache(self.codex_home, payload)
-
-        with self.assertRaisesRegex(StateError, "exactly one gpt-5.6-luna"):
-            self.deployment().deploy()
-
-        self.assert_no_managed_scout_write()
-
-    def test_unsupported_luna_version_fails_before_any_managed_write(self) -> None:
-        payload = json.loads(json.dumps(MODEL_CACHE))
-        luna = next(
-            model for model in payload["models"] if model["slug"] == "gpt-5.6-luna"
-        )
-        luna["multi_agent_version"] = "v3"
-        write_model_cache(self.codex_home, payload)
-
-        with self.assertRaisesRegex(StateError, "unsupported multi_agent_version"):
-            self.deployment().deploy()
-
-        self.assert_no_managed_scout_write()
-
-    def test_exact_manual_catalog_is_adopted(self) -> None:
-        expected = json.loads(self.original_cache)
-        luna = next(
-            model for model in expected["models"] if model["slug"] == "gpt-5.6-luna"
-        )
-        luna["multi_agent_version"] = "v2"
-        catalog = self.codex_home / "models-luna-v2.json"
-        catalog.write_text(
-            json.dumps(expected, indent=2, ensure_ascii=True) + "\n",
+    def test_legacy_v2_install_migrates_to_native_luna_support(self) -> None:
+        self.seed_legacy_v2()
+        config = self.codex_home / "config.toml"
+        config.write_text(
+            config.read_text(encoding="utf-8")
+            + '\n[agents.custom]\nvalue = "keep"\n',
             encoding="utf-8",
         )
 
         with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
             self.deployment().deploy()
 
-        self.assertTrue((self.codex_home / EVIDENCE_SCOUT_MANIFEST).is_file())
-        self.assertEqual(expected, json.loads(catalog.read_text(encoding="utf-8")))
+        self.assertFalse((self.codex_home / "models-luna-v2.json").exists())
+        values = current_values(config.read_text(encoding="utf-8"))
+        self.assertNotIn(("model_catalog_json",), values)
+        self.assertIn(
+            '[agents.custom]\nvalue = "keep"', config.read_text(encoding="utf-8")
+        )
+        manifest = json.loads(
+            (self.codex_home / EVIDENCE_SCOUT_MANIFEST).read_text(encoding="utf-8")
+        )
+        self.assertEqual(3, manifest["schemaVersion"])
+
+    def test_legacy_v2_migration_preserves_foreign_catalog_pointer(self) -> None:
+        self.seed_legacy_v2(pointer='"/user/catalog.json"')
+
+        with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
+            self.deployment().deploy()
+
+        self.assertFalse((self.codex_home / "models-luna-v2.json").exists())
+        self.assertIn(
+            'model_catalog_json = "/user/catalog.json"',
+            (self.codex_home / "config.toml").read_text(encoding="utf-8"),
+        )
 
     def test_override_warns_without_changing_override(self) -> None:
         override = self.codex_home / "AGENTS.override.md"
@@ -229,9 +200,8 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
         self.assertIn("routing is inactive", stderr.getvalue())
         self.assertEqual("# User override\n", override.read_text(encoding="utf-8"))
 
-    def test_catalog_drift_requires_force_and_force_repairs_it(self) -> None:
-        with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
-            self.deployment().deploy()
+    def test_legacy_catalog_drift_requires_force_and_force_removes_it(self) -> None:
+        self.seed_legacy_v2()
         catalog = self.codex_home / "models-luna-v2.json"
         catalog.write_text('{"user":"change"}\n', encoding="utf-8")
 
@@ -240,24 +210,24 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
         with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
             self.deployment(force=True).deploy()
 
-        luna = [
-            model
-            for model in json.loads(catalog.read_text(encoding="utf-8"))["models"]
-            if model["slug"] == "gpt-5.6-luna"
-        ]
-        self.assertEqual("v2", luna[0]["multi_agent_version"])
+        self.assertFalse(catalog.exists())
+        self.assertNotIn(
+            "model_catalog_json",
+            (self.codex_home / "config.toml").read_text(encoding="utf-8"),
+        )
 
-    def test_conflicting_model_catalog_pointer_is_preserved_without_force(self) -> None:
-        config = self.codex_home / "config.toml"
-        original = 'model_catalog_json = "/user/catalog.json"\n'.encode("utf-8")
-        config.write_bytes(original)
+    def test_missing_legacy_catalog_requires_force_to_remove_owned_pointer(self) -> None:
+        self.seed_legacy_v2(catalog=b"")
 
-        with self.assertRaisesRegex(DriftError, "model_catalog_json already points"):
+        with self.assertRaisesRegex(DriftError, "managed evidence-scout"):
             self.deployment().deploy()
+        with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
+            self.deployment(force=True).deploy()
 
-        self.assertEqual(original, config.read_bytes())
-        self.assertFalse((self.codex_home / "models-luna-v2.json").exists())
-        self.assertFalse((self.codex_home / EVIDENCE_SCOUT_MANIFEST).exists())
+        self.assertNotIn(
+            "model_catalog_json",
+            (self.codex_home / "config.toml").read_text(encoding="utf-8"),
+        )
 
     def test_exact_manual_agent_is_adopted(self) -> None:
         target = self.codex_home / "agents" / "evidence-scout.toml"
@@ -327,7 +297,6 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
         with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
             self.deployment().deploy()
         configured = (self.codex_home / "config.toml").read_bytes()
-        configured_catalog = (self.codex_home / "models-luna-v2.json").read_bytes()
 
         CodexEvidenceScoutDeployment(
             self.source,
@@ -342,10 +311,43 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
         self.assertFalse((self.codex_home / "agents" / "evidence-scout.toml").exists())
         self.assertFalse((self.codex_home / EVIDENCE_SCOUT_MANIFEST).exists())
         self.assertEqual(configured, (self.codex_home / "config.toml").read_bytes())
-        self.assertEqual(
-            configured_catalog,
-            (self.codex_home / "models-luna-v2.json").read_bytes(),
+        self.assertFalse((self.codex_home / "models-luna-v2.json").exists())
+
+    def test_uninstall_cleans_owned_legacy_catalog_and_pointer(self) -> None:
+        self.seed_legacy_v2()
+
+        with mock.patch("scripts.install.codex_config.CodexConfigEditor._doctor"):
+            CodexEvidenceScoutDeployment(
+                self.source,
+                self.routing,
+                self.codex_home,
+                "1.2.3",
+                enabled=False,
+            ).uninstall()
+
+        self.assertFalse((self.codex_home / "models-luna-v2.json").exists())
+        self.assertNotIn(
+            "model_catalog_json",
+            (self.codex_home / "config.toml").read_text(encoding="utf-8"),
         )
+
+    def test_uninstall_refuses_drifted_legacy_catalog_without_force(self) -> None:
+        self.seed_legacy_v2()
+        catalog = self.codex_home / "models-luna-v2.json"
+        catalog.write_text('{"user":"change"}\n', encoding="utf-8")
+
+        deployment = CodexEvidenceScoutDeployment(
+            self.source,
+            self.routing,
+            self.codex_home,
+            "1.2.3",
+            enabled=False,
+        )
+        with self.assertRaisesRegex(DriftError, "managed evidence-scout"):
+            deployment.uninstall()
+
+        self.assertTrue(catalog.exists())
+        self.assertTrue((self.codex_home / EVIDENCE_SCOUT_MANIFEST).exists())
 
 
 class EvidenceScoutInstallerIntegrationTests(unittest.TestCase):
@@ -357,7 +359,6 @@ class EvidenceScoutInstallerIntegrationTests(unittest.TestCase):
             os.environ, {"CODEX_HOME": str(self.codex_home)}
         )
         self.environment.start()
-        write_model_cache(self.codex_home)
 
     def tearDown(self) -> None:
         self.environment.stop()
@@ -373,9 +374,8 @@ class EvidenceScoutInstallerIntegrationTests(unittest.TestCase):
             installer.uninstall()
             self.assertEqual(set(), installer.current_components())
 
-    def test_reset_reinstalls_scout_and_preserves_runtime_catalog(self) -> None:
+    def test_reset_reinstalls_scout_without_model_catalog(self) -> None:
         installer = CodexInstaller(ROOT, self.catalog, "1.2.3", local_source=True)
-        source_cache = (self.codex_home / "models_cache.json").read_bytes()
         with mock.patch(
             "scripts.install.codex.shutil.which", return_value="/fake/codex"
         ), mock.patch(
@@ -385,15 +385,12 @@ class EvidenceScoutInstallerIntegrationTests(unittest.TestCase):
         ):
             installer.install(["evidence-scout"])
             configured = (self.codex_home / "config.toml").read_bytes()
-            catalog = (self.codex_home / "models-luna-v2.json").read_bytes()
             installer.install(["evidence-scout"], reset=True)
 
         self.assertTrue((self.codex_home / "agents" / "evidence-scout.toml").is_file())
         self.assertTrue((self.codex_home / EVIDENCE_SCOUT_MANIFEST).is_file())
-        self.assertEqual(
-            source_cache, (self.codex_home / "models_cache.json").read_bytes()
-        )
-        self.assertEqual(catalog, (self.codex_home / "models-luna-v2.json").read_bytes())
+        self.assertFalse((self.codex_home / "models_cache.json").exists())
+        self.assertFalse((self.codex_home / "models-luna-v2.json").exists())
         self.assertEqual(configured, (self.codex_home / "config.toml").read_bytes())
 
     def test_interactive_row_names_the_runtime_contract(self) -> None:

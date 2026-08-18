@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import stat
 import subprocess
 import tempfile
@@ -8,9 +10,14 @@ from pathlib import Path
 from unittest import mock
 
 from scripts.install.codex_config import (
+    CONTEXT_POLICY_KEYS,
     RECOMMENDED_SETTINGS,
+    CodexContextPolicy,
     CodexConfigEditor,
+    ContextPolicyState,
     current_values,
+    prompt_context_action,
+    prompt_context_settings,
     update_config,
 )
 from scripts.install.common import InstallerError, StateError
@@ -47,6 +54,22 @@ class CodexConfigTextTests(unittest.TestCase):
         self.assertIn("[mcp_servers.example]\ncommand = \"example\"\n", updated)
         self.assertIn("custom_limit = 9\n", updated)
         self.assertEqual(RECOMMENDED_SETTINGS, current_values(updated))
+
+    def test_quoted_plugin_table_ends_managed_agents_section(self) -> None:
+        original = (
+            "[agents]\n"
+            "enabled = true\n"
+            "max_concurrent_threads_per_session = 4\n"
+            "\n"
+            '[plugins."demo@marketplace"]\n'
+            "enabled = true\n"
+        )
+
+        updated = update_config(original, RECOMMENDED_SETTINGS)
+
+        self.assertEqual(RECOMMENDED_SETTINGS, current_values(updated))
+        self.assertEqual(2, updated.count("enabled = true"))
+        self.assertIn('[plugins."demo@marketplace"]\nenabled = true\n', updated)
 
     def test_dotted_managed_keys_remain_dotted(self) -> None:
         original = (
@@ -145,6 +168,49 @@ class CodexConfigTextTests(unittest.TestCase):
                 RECOMMENDED_SETTINGS,
             )
 
+    def test_managed_key_removal_preserves_comment_and_unmanaged_text(self) -> None:
+        original = (
+            '# keep\nmodel_catalog_json = "/managed/catalog.json" # why it existed\n'
+            'model = "user-model"\n'
+        )
+
+        updated = update_config(
+            original,
+            {},
+            remove=(("model_catalog_json",),),
+        )
+
+        self.assertEqual(
+            '# keep\n# why it existed\nmodel = "user-model"\n',
+            updated,
+        )
+        self.assertNotIn("model_catalog_json", updated)
+
+    def test_key_cannot_be_set_and_removed_together(self) -> None:
+        with self.assertRaisesRegex(StateError, "set and removed together"):
+            update_config(
+                "",
+                {("model_catalog_json",): '"/managed/catalog.json"'},
+                remove=(("model_catalog_json",),),
+            )
+
+    def test_context_keys_are_outside_the_general_config_scope(self) -> None:
+        text = (
+            "model_context_window = 800000\n"
+            "model_auto_compact_token_limit = 720000\n"
+            'model_auto_compact_token_limit_scope = "total"\n'
+        )
+
+        self.assertEqual({}, current_values(text))
+        self.assertEqual(
+            {
+                ("model_context_window",): "800000",
+                ("model_auto_compact_token_limit",): "720000",
+                ("model_auto_compact_token_limit_scope",): '"total"',
+            },
+            current_values(text, managed_keys=CONTEXT_POLICY_KEYS, stage="context"),
+        )
+
 
 class CodexConfigApplyTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -187,6 +253,24 @@ class CodexConfigApplyTests(unittest.TestCase):
         self.assertEqual(original, editor.backup.read_bytes())
         self.assertEqual(0o640, stat.S_IMODE(editor.path.stat().st_mode))
         self.assertIn('model = "user-model"', editor.path.read_text(encoding="utf-8"))
+
+    def test_apply_and_verify_remove_managed_key(self) -> None:
+        self.codex_home.mkdir()
+        path = self.codex_home / "config.toml"
+        path.write_text(
+            'model_catalog_json = "/managed/catalog.json"\nmodel = "user-model"\n',
+            encoding="utf-8",
+        )
+        editor = self.editor()
+        plan = editor.plan({}, remove=(("model_catalog_json",),))
+
+        with mock.patch.object(editor, "_doctor"):
+            editor.apply(plan, show_diff=False)
+            editor.verify(plan)
+
+        updated = path.read_text(encoding="utf-8")
+        self.assertNotIn("model_catalog_json", updated)
+        self.assertIn('model = "user-model"', updated)
 
     def test_doctor_failure_restores_the_original(self) -> None:
         self.codex_home.mkdir()
@@ -318,6 +402,254 @@ class CodexConfigApplyTests(unittest.TestCase):
             "scripts.install.codex_config.subprocess.run", return_value=completed
         ):
             editor._doctor()
+
+
+class ContextPolicyPromptTests(unittest.TestCase):
+    def test_current_policy_lists_window_compaction_and_scope(self) -> None:
+        state = ContextPolicyState(
+            "managed",
+            {
+                ("model_context_window",): "800000",
+                ("model_auto_compact_token_limit",): "720000",
+                ("model_auto_compact_token_limit_scope",): '"total"',
+            },
+            "gpt-5.6-sol",
+            1_050_000,
+        )
+        output = io.StringIO()
+
+        with mock.patch("builtins.input", return_value="q"), contextlib.redirect_stdout(
+            output
+        ):
+            self.assertIsNone(prompt_context_action(state))
+
+        rendered = output.getvalue()
+        self.assertIn("Current configuration: custom (Hukuhaka managed)", rendered)
+        self.assertIn("Configured model: gpt-5.6-sol (config.toml)", rendered)
+        self.assertIn("Documented model capacity: 1,050,000 tokens", rendered)
+        self.assertIn("Context window: 800000", rendered)
+        self.assertIn("Auto-compact at: 720000", rendered)
+        self.assertIn("Threshold scope: total", rendered)
+
+    def test_custom_policy_input_explains_all_three_settings(self) -> None:
+        output = io.StringIO()
+
+        with mock.patch(
+            "builtins.input", side_effect=("800000", "720000", "")
+        ), contextlib.redirect_stdout(output):
+            self.assertEqual(
+                (800000, 720000, "total"),
+                prompt_context_settings(
+                    ContextPolicyState(
+                        "default", {}, "gpt-5.6-sol", 1_050_000
+                    )
+                ),
+            )
+
+        rendered = output.getvalue()
+        self.assertIn("window, auto-compaction threshold, and threshold scope", rendered)
+        self.assertIn("must be lower than the context window", rendered)
+        self.assertIn("Documented model capacity: 1,050,000 tokens", rendered)
+        self.assertIn("Current context window: Codex/model default", rendered)
+        self.assertIn("numeric threshold not exposed", rendered)
+        self.assertIn("Current threshold scope: total (Codex default", rendered)
+
+    def test_unmanaged_policy_does_not_offer_mutation(self) -> None:
+        state = ContextPolicyState(
+            "unmanaged", {("model_context_window",): "700000"}
+        )
+        output = io.StringIO()
+
+        with mock.patch(
+            "builtins.input", side_effect=("1", "q")
+        ), contextlib.redirect_stdout(output):
+            self.assertIsNone(prompt_context_action(state))
+
+        rendered = output.getvalue()
+        self.assertIn("will not be changed", rendered)
+        self.assertNotIn("1. Set custom policy", rendered)
+
+
+class CodexContextPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="hukuhaka context policy ")
+        self.codex_home = Path(self.temp.name) / ".codex"
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def policy(self, *, dry_run: bool = False) -> CodexContextPolicy:
+        return CodexContextPolicy(self.codex_home, dry_run=dry_run)
+
+    def test_state_reports_only_observed_overrides(self) -> None:
+        self.assertEqual("default", self.policy().state().kind)
+        self.assertEqual({}, self.policy().state().settings)
+
+        self.codex_home.mkdir()
+        config = self.codex_home / "config.toml"
+        config.write_text(
+            'model = "gpt-5.6-sol"\n'
+            "model_context_window = 800000\n"
+            "model_auto_compact_token_limit = 720000\n"
+            'model_auto_compact_token_limit_scope = "total"\n',
+            encoding="utf-8",
+        )
+
+        state = self.policy().state()
+        self.assertEqual("unmanaged", state.kind)
+        self.assertEqual("gpt-5.6-sol", state.model)
+        self.assertEqual(1_050_000, state.documented_context_capacity)
+        self.assertEqual("800000", state.settings[("model_context_window",)])
+        self.assertEqual(
+            "720000", state.settings[("model_auto_compact_token_limit",)]
+        )
+        self.assertEqual(
+            '"total"',
+            state.settings[("model_auto_compact_token_limit_scope",)],
+        )
+
+    def test_state_shows_documented_capacity_for_configured_model(self) -> None:
+        self.codex_home.mkdir()
+        config = self.codex_home / "config.toml"
+
+        for model in (
+            "gpt-5.6",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+        ):
+            config.write_text('model = "{}"\n'.format(model), encoding="utf-8")
+            state = self.policy().state()
+
+            self.assertEqual("default", state.kind)
+            self.assertEqual(model, state.model)
+            self.assertEqual(1_050_000, state.documented_context_capacity)
+
+    def test_set_then_reset_preserves_all_unrelated_config(self) -> None:
+        self.codex_home.mkdir()
+        config = self.codex_home / "config.toml"
+        original = b'model = "user-model"\npersonality = "friendly"\n'
+        config.write_bytes(original)
+        policy = self.policy()
+
+        set_plan = policy.plan_set(
+            context_window=800000,
+            compact_at=720000,
+            scope="total",
+        )
+        with mock.patch.object(policy.config, "_doctor"):
+            self.assertTrue(policy.apply(set_plan))
+
+        updated = config.read_text(encoding="utf-8")
+        self.assertIn('model = "user-model"', updated)
+        self.assertIn('personality = "friendly"', updated)
+        self.assertEqual(
+            {
+                ("model_context_window",): "800000",
+                ("model_auto_compact_token_limit",): "720000",
+                ("model_auto_compact_token_limit_scope",): '"total"',
+            },
+            current_values(
+                updated,
+                managed_keys=CONTEXT_POLICY_KEYS,
+                stage="context",
+            ),
+        )
+        self.assertTrue((self.codex_home / ".hukuhaka-context-policy.json").is_file())
+
+        reset_plan = policy.plan_reset()
+        with mock.patch.object(policy.config, "_doctor"):
+            self.assertTrue(policy.apply(reset_plan))
+
+        self.assertEqual(
+            original.decode("utf-8").strip(),
+            config.read_text(encoding="utf-8").strip(),
+        )
+        self.assertFalse((self.codex_home / ".hukuhaka-context-policy.json").exists())
+
+    def test_existing_unmanaged_context_override_is_preserved(self) -> None:
+        self.codex_home.mkdir()
+        config = self.codex_home / "config.toml"
+        original = b"model_context_window = 700000\n"
+        config.write_bytes(original)
+
+        with self.assertRaisesRegex(StateError, "not owned by Hukuhaka"):
+            self.policy().plan_reset()
+
+        self.assertEqual(original, config.read_bytes())
+
+    def test_managed_context_drift_is_rejected_without_mutation(self) -> None:
+        self.codex_home.mkdir()
+        policy = self.policy()
+        first_plan = policy.plan_set(
+            context_window=800000,
+            compact_at=720000,
+            scope="total",
+        )
+        with mock.patch.object(policy.config, "_doctor"):
+            policy.apply(first_plan)
+        config = self.codex_home / "config.toml"
+        config.write_text(
+            config.read_text(encoding="utf-8").replace("720000", "710000"),
+            encoding="utf-8",
+        )
+        drifted = config.read_bytes()
+
+        with self.assertRaisesRegex(StateError, "context policy drifted"):
+            policy.plan_reset()
+
+        self.assertEqual(drifted, config.read_bytes())
+
+    def test_verify_detects_component_changes_to_managed_context(self) -> None:
+        self.codex_home.mkdir()
+        policy = self.policy()
+        plan = policy.plan_set(
+            context_window=800000,
+            compact_at=720000,
+            scope="total",
+        )
+        with mock.patch.object(policy.config, "_doctor"):
+            policy.apply(plan)
+        config = self.codex_home / "config.toml"
+        config.write_text(
+            config.read_text(encoding="utf-8").replace("720000", "710000"),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(StateError, "context policy drifted"):
+            policy.verify(plan)
+
+    def test_doctor_failure_rolls_back_config_and_context_manifest(self) -> None:
+        self.codex_home.mkdir()
+        config = self.codex_home / "config.toml"
+        original = b'model = "user-model"\n'
+        config.write_bytes(original)
+        policy = self.policy()
+        plan = policy.plan_set(
+            context_window=800000,
+            compact_at=720000,
+            scope="total",
+        )
+
+        with mock.patch.object(
+            policy.config,
+            "_doctor",
+            side_effect=InstallerError("doctor rejected context policy"),
+        ):
+            with self.assertRaisesRegex(InstallerError, "doctor rejected context policy"):
+                policy.apply(plan)
+
+        self.assertEqual(original, config.read_bytes())
+        self.assertFalse((self.codex_home / ".hukuhaka-context-policy.json").exists())
+        self.assertFalse((self.codex_home / "config.toml.hukuhaka-backup").exists())
+
+    def test_compaction_threshold_must_be_lower_than_window(self) -> None:
+        with self.assertRaisesRegex(StateError, "must be lower"):
+            self.policy().plan_set(
+                context_window=800000,
+                compact_at=800000,
+                scope="total",
+            )
 
 
 if __name__ == "__main__":

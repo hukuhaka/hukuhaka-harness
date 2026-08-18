@@ -80,11 +80,11 @@ remain unversioned.
 
 Codex also offers an opt-in `Configure global Codex defaults` choice. It is
 unchecked by default. Selecting Evidence Scout applies only its required
-multi-agent enablement, concurrency ceiling, and Luna v2 child-model
-compatibility catalog during normal install; it does not change the primary
-model or unrelated agent defaults. Reset and uninstall never modify Codex
-`config.toml`, memory, or unrelated Claude settings. The compatibility catalog
-therefore persists with its config pointer after removal.
+multi-agent enablement and concurrency ceiling; it does not change the primary
+model, model catalog, or unrelated agent defaults. Reset and uninstall preserve
+those runtime settings, memory, and unrelated Claude settings. Updating a
+schema-v2 Evidence Scout install removes only its manifest-owned obsolete Luna
+catalog and exact config pointer.
 
 The interactive command uses `bash -c` so stdin remains attached to the
 terminal. `curl ... | bash` remains supported for explicit non-interactive
@@ -128,13 +128,12 @@ Codex has the same component lifecycle:
 `$CODEX_HOME/agents/evidence-scout.toml`, merges a separately owned routing
 block into `$CODEX_HOME/AGENTS.md`, enables multi-agent execution, and sets the
 simultaneous concurrency ceiling to four. It leaves `models_cache.json`
-untouched, derives `models-luna-v2.json` by changing only Luna's
-`multi_agent_version` to `v2`, and points the top-level `model_catalog_json`
-setting at that generated file. Invalid or ambiguous source caches fail before
-managed writes. The ceiling is capacity, not a fixed number of scouts: Codex
+untouched and relies on Codex's native Luna subagent support; it does not create
+or select a model catalog. The ceiling is capacity, not a fixed number of scouts: Codex
 uses one scout per genuinely independent read-only scope and may use fewer. An
 existing byte-identical personal scout is adopted; a conflicting unmanaged
-file or model-catalog pointer is preserved unless `--force` is explicit.
+agent file is preserved unless `--force` is explicit. User-owned model-catalog
+pointers are always left unchanged.
 If `$CODEX_HOME/AGENTS.override.md` exists, Codex gives it precedence over the
 global `AGENTS.md`; installation succeeds but warns that scout routing is
 inactive until that override is removed or carries equivalent routing guidance.

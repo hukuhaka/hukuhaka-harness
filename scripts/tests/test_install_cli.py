@@ -275,12 +275,7 @@ fi
         self.assertTrue((codex_home / ".hukuhaka-guidance-manifest.json").is_file())
         self.assertTrue((codex_home / ".hukuhaka-evidence-scout-manifest.json").is_file())
         self.assertTrue((codex_home / "agents" / "evidence-scout.toml").is_file())
-        self.assertEqual(
-            "v2",
-            json.loads(
-                (codex_home / "models-luna-v2.json").read_text(encoding="utf-8")
-            )["models"][0]["multi_agent_version"],
-        )
+        self.assertFalse((codex_home / "models-luna-v2.json").exists())
         self.assertIn(
             "hukuhaka-evidence-scout:begin",
             (codex_home / "AGENTS.md").read_text(encoding="utf-8"),
@@ -288,12 +283,7 @@ fi
         config = (codex_home / "config.toml").read_text(encoding="utf-8")
         self.assertIn("multi_agent = true", config)
         self.assertIn("max_concurrent_threads_per_session = 4", config)
-        self.assertIn(
-            'model_catalog_json = {}'.format(
-                json.dumps(str(codex_home / "models-luna-v2.json"))
-            ),
-            config,
-        )
+        self.assertNotIn("model_catalog_json", config)
 
         reduced = self._run(
             (
@@ -313,14 +303,94 @@ fi
         self.assertFalse((codex_home / ".hukuhaka-guidance-manifest.json").exists())
         self.assertFalse((codex_home / ".hukuhaka-evidence-scout-manifest.json").exists())
         self.assertFalse((codex_home / "agents" / "evidence-scout.toml").exists())
-        self.assertTrue((codex_home / "models-luna-v2.json").is_file())
-        self.assertIn("model_catalog_json", (codex_home / "config.toml").read_text())
+        self.assertFalse((codex_home / "models-luna-v2.json").exists())
+        self.assertNotIn("model_catalog_json", (codex_home / "config.toml").read_text())
 
         first_remove = self._run(("codex", "uninstall", "--yes"), environment=environment)
         second_remove = self._run(("codex", "uninstall", "--yes"), environment=environment)
         self.assertEqual(0, first_remove.returncode, first_remove.stderr)
         self.assertEqual(0, second_remove.returncode, second_remove.stderr)
         self.assertEqual("", (state / "plugins").read_text(encoding="utf-8"))
+
+    def test_fake_codex_context_policy_is_scoped_and_reversible(self) -> None:
+        state, codex_home = self._install_fake_codex()
+        config_path = codex_home / "config.toml"
+        config_path.write_text(
+            'model = "user-model"\npersonality = "friendly"\n',
+            encoding="utf-8",
+        )
+        environment = self._environment(
+            CODEX_HOME=str(codex_home),
+            FAKE_CODEX_STATE=str(state),
+            FAKE_SOURCE_ROOT=str(ROOT),
+        )
+
+        set_policy = self._run(
+            (
+                "codex",
+                "context",
+                "set",
+                "--window",
+                "800000",
+                "--compact-at",
+                "720000",
+                "--scope",
+                "total",
+                "--yes",
+            ),
+            environment=environment,
+        )
+
+        self.assertEqual(0, set_policy.returncode, set_policy.stderr)
+        self.assertIn("model_context_window = 800000", config_path.read_text())
+        self.assertIn(
+            "model_auto_compact_token_limit = 720000", config_path.read_text()
+        )
+        self.assertIn('model = "user-model"', config_path.read_text())
+        self.assertTrue((codex_home / ".hukuhaka-context-policy.json").is_file())
+
+        install = self._run(
+            ("codex", "install", "--recommended", "--yes"),
+            environment=environment,
+        )
+        self.assertEqual(0, install.returncode, install.stderr)
+        after_install = config_path.read_text(encoding="utf-8")
+        self.assertIn("model_context_window = 800000", after_install)
+        self.assertIn("model_auto_compact_token_limit = 720000", after_install)
+        self.assertIn('model = "user-model"', after_install)
+
+        reset_policy = self._run(
+            ("codex", "context", "reset", "--yes"),
+            environment=environment,
+        )
+
+        self.assertEqual(0, reset_policy.returncode, reset_policy.stderr)
+        reset = config_path.read_text(encoding="utf-8")
+        self.assertNotIn("model_context_window", reset)
+        self.assertNotIn("model_auto_compact_token_limit", reset)
+        self.assertIn('model = "user-model"', reset)
+        self.assertIn('personality = "friendly"', reset)
+        self.assertFalse((codex_home / ".hukuhaka-context-policy.json").exists())
+
+    def test_fake_codex_context_reset_refuses_unmanaged_override(self) -> None:
+        state, codex_home = self._install_fake_codex()
+        config_path = codex_home / "config.toml"
+        original = "model_context_window = 700000\n"
+        config_path.write_text(original, encoding="utf-8")
+        environment = self._environment(
+            CODEX_HOME=str(codex_home),
+            FAKE_CODEX_STATE=str(state),
+            FAKE_SOURCE_ROOT=str(ROOT),
+        )
+
+        result = self._run(
+            ("codex", "context", "reset", "--yes"),
+            environment=environment,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("not owned by Hukuhaka", result.stderr)
+        self.assertEqual(original, config_path.read_text(encoding="utf-8"))
 
     def test_fake_codex_migrates_legacy_agent_limit_before_doctor(self) -> None:
         state, codex_home = self._install_fake_codex()

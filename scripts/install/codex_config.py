@@ -11,9 +11,15 @@ import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Mapping, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
-from .common import InstallerError, StateError, atomic_write_bytes
+from .common import (
+    FileTransaction,
+    InstallerError,
+    StateError,
+    atomic_write_bytes,
+    installer_state,
+)
 
 
 Key = Tuple[str, ...]
@@ -44,9 +50,31 @@ EVIDENCE_SCOUT_SETTINGS = {
     ("agents", "max_concurrent_threads_per_session"): "4",
 }  # type: Dict[Key, str]
 
-# The evidence-scout installer also manages this dynamic top-level key. Its
-# value depends on CODEX_HOME, so it cannot live in RECOMMENDED_SETTINGS.
+# Legacy Evidence Scout installs owned this top-level key. Keep it in the
+# managed set only so schema-v2 manifests can remove their exact pointer.
 EVIDENCE_SCOUT_DYNAMIC_KEYS = {("model_catalog_json",)}
+
+# Context policy is intentionally outside the general recommended settings.
+# Its command owns only these explicit top-level overrides and must never make
+# an install, reset, or full config-wizard operation responsible for them.
+CONTEXT_POLICY_KEYS = (
+    ("model_context_window",),
+    ("model_auto_compact_token_limit",),
+    ("model_auto_compact_token_limit_scope",),
+)
+CONTEXT_POLICY_SCOPES = ("total", "body_after_prefix")
+CONTEXT_POLICY_MANIFEST = ".hukuhaka-context-policy.json"
+MODEL_KEY = ("model",)
+
+# These are documented model capacities, not Codex runtime defaults. Keep an
+# unknown model unknown instead of guessing from a name or silently applying a
+# capacity intended for a different model/provider.
+DOCUMENTED_MODEL_CONTEXT_CAPACITIES = {
+    "gpt-5.6": 1_050_000,
+    "gpt-5.6-sol": 1_050_000,
+    "gpt-5.6-terra": 1_050_000,
+    "gpt-5.6-luna": 1_050_000,
+}  # type: Dict[str, int]
 
 # Codex still accepts agents.max_threads as a legacy alias for the canonical
 # concurrency key. Treat both spellings as one managed identity so an existing
@@ -65,6 +93,11 @@ def _managed_keys() -> set[Key]:
 
 def _canonical_key(key: Key) -> Key:
     return LEGACY_KEY_ALIASES.get(key, key)
+
+
+def _resolved_managed_keys(managed_keys: Optional[Sequence[Key]]) -> set[Key]:
+    keys = _managed_keys() if managed_keys is None else set(managed_keys)
+    return {_canonical_key(key) for key in keys}
 
 
 def _canonical_key_text(assignment: "_Assignment", key: Key) -> str:
@@ -86,6 +119,9 @@ class ConfigPlan:
     proposed: bytes
     existed: bool
     mode: int
+    removed: Tuple[Key, ...] = ()
+    managed_keys: Tuple[Key, ...] = ()
+    stage: str = "configure"
 
     @property
     def changed(self) -> bool:
@@ -207,6 +243,15 @@ def _parse_assignments(text: str) -> Tuple[List[str], List[_Assignment], Dict[Ke
             sections.setdefault(section, index)
             index += 1
             continue
+        if stripped.startswith("["):
+            # Codex owns tables with quoted segments such as
+            # [plugins."name@marketplace"]. They are outside this editor's
+            # managed surface, but they still end the preceding table. Do not
+            # misclassify their assignments as members of [agents] or another
+            # supported section.
+            section = ()
+            index += 1
+            continue
         match = _ASSIGNMENT_RE.match(lines[index])
         if not match:
             index += 1
@@ -228,32 +273,38 @@ def _parse_assignments(text: str) -> Tuple[List[str], List[_Assignment], Dict[Ke
     return lines, assignments, sections
 
 
-def current_values(text: str) -> Dict[Key, str]:
+def current_values(
+    text: str,
+    *,
+    managed_keys: Optional[Sequence[Key]] = None,
+    stage: str = "configure",
+) -> Dict[Key, str]:
+    managed = _resolved_managed_keys(managed_keys)
     _, assignments, _ = _parse_assignments(text)
     found = {}  # type: Dict[Key, str]
     for assignment in assignments:
         key = _canonical_key(assignment.path)
-        if key in _managed_keys():
+        if key in managed:
             if key in found:
                 raise StateError(
                     "duplicate managed Codex config key: {}".format(
                         ".".join(key)
                     ),
                     host="codex",
-                    stage="configure",
+                    stage=stage,
                     operation="parse-config",
                 )
             found[key] = assignment.value
         elif any(
             key[: len(assignment.path)] == assignment.path
-            for key in _managed_keys()
+            for key in managed
         ):
             raise StateError(
                 "managed Codex config table uses an inline value: {}".format(
                     ".".join(assignment.path)
                 ),
                 host="codex",
-                stage="configure",
+                stage=stage,
                 operation="parse-config",
             )
     return found
@@ -267,22 +318,61 @@ def _section_end(lines: Sequence[str], start: int) -> int:
     return len(lines)
 
 
-def update_config(text: str, settings: Mapping[Key, str]) -> str:
-    unknown = [key for key in settings if key not in _managed_keys()]
+def update_config(
+    text: str,
+    settings: Mapping[Key, str],
+    *,
+    remove: Sequence[Key] = (),
+    managed_keys: Optional[Sequence[Key]] = None,
+    stage: str = "configure",
+) -> str:
+    managed = _resolved_managed_keys(managed_keys)
+    remove_keys = {_canonical_key(key) for key in remove}
+    unknown = [
+        key for key in tuple(settings) + tuple(remove_keys) if key not in managed
+    ]
     if unknown:
         raise StateError(
             "unsupported managed Codex config key: {}".format(".".join(unknown[0])),
             host="codex",
-            stage="configure",
+            stage=stage,
+            operation="update-config",
+        )
+    overlap = set(settings) & remove_keys
+    if overlap:
+        raise StateError(
+            "Codex config key cannot be set and removed together: {}".format(
+                ".".join(next(iter(overlap)))
+            ),
+            host="codex",
+            stage=stage,
             operation="update-config",
         )
 
     lines, assignments, sections = _parse_assignments(text)
-    current_values(text)  # Validate duplicate and inline managed shapes.
+    current_values(
+        text, managed_keys=tuple(managed), stage=stage
+    )  # Validate duplicate and inline managed shapes.
     replacements = {}  # type: Dict[int, Tuple[int, str]]
     present = set()  # type: set[Key]
     for assignment in assignments:
         key = _canonical_key(assignment.path)
+        if key in remove_keys:
+            original_lines = lines[assignment.start:assignment.end]
+            comments = [
+                comment
+                for comment in (_trailing_comment(line) for line in original_lines)
+                if comment
+            ]
+            newline = "\r\n" if original_lines[0].endswith("\r\n") else "\n"
+            replacements[assignment.start] = (
+                assignment.end,
+                "".join(
+                    "{}{}{}".format(assignment.indent, comment, newline)
+                    for comment in comments
+                ),
+            )
+            continue
         if key not in settings:
             continue
         present.add(key)
@@ -474,12 +564,148 @@ def prompt_settings(current: Mapping[Key, str]) -> Dict[Key, str]:
     }
 
 
+def _prompt_positive_integer(label: str) -> int:
+    while True:
+        entered = input("{}: ".format(label)).strip()
+        if entered.isdigit() and int(entered) > 0:
+            return int(entered)
+        print("Enter a positive integer.")
+
+
+def _context_setting_display(state: "ContextPolicyState", key: Key) -> str:
+    value = state.settings.get(key)
+    if value is None:
+        if key == ("model_context_window",):
+            return "Codex/model default (no override; numeric limit not exposed)"
+        if key == ("model_auto_compact_token_limit",):
+            return (
+                "Codex model default (no override; numeric threshold "
+                "not exposed)"
+            )
+        if key == ("model_auto_compact_token_limit_scope",):
+            return "total (Codex default; no override)"
+        return "Codex/model default (no override)"
+    if key == ("model_auto_compact_token_limit_scope",):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            pass
+    return "{} ({})".format(value, state.source)
+
+
+def prompt_context_action(state: "ContextPolicyState") -> Optional[str]:
+    print("Codex context policy")
+    print("  Current configuration: {}".format(state.label))
+    if state.model is None:
+        print("  Configured model: Codex default (not set in config.toml)")
+    else:
+        print("  Configured model: {} (config.toml)".format(state.model))
+    if state.documented_context_capacity is not None:
+        print(
+            "  Documented model capacity: {:,} tokens (not the Codex default)".format(
+                state.documented_context_capacity
+            )
+        )
+    print(
+        "  Context window: {}".format(
+            _context_setting_display(
+                state, ("model_context_window",)
+            )
+        )
+    )
+    print(
+        "  Auto-compact at: {}".format(
+            _context_setting_display(
+                state, ("model_auto_compact_token_limit",)
+            )
+        )
+    )
+    print(
+        "  Threshold scope: {}".format(
+            _context_setting_display(
+                state,
+                ("model_auto_compact_token_limit_scope",),
+            )
+        )
+    )
+    if not state.actionable:
+        print("  This policy is not managed by Hukuhaka and will not be changed.")
+        print("  q. Exit")
+        while True:
+            choice = input("Choose an action [q]: ").strip().lower() or "q"
+            if choice in ("q", "quit", "exit"):
+                return None
+            print("Choose q.")
+    print("  1. Set custom policy")
+    print("  2. Reset to Codex defaults")
+    print("  q. Exit")
+    while True:
+        choice = input("Choose an action [q]: ").strip().lower() or "q"
+        if choice in ("1", "set"):
+            return "set"
+        if choice in ("2", "reset"):
+            return "reset"
+        if choice in ("q", "quit", "exit"):
+            return None
+        print("Choose 1, 2, or q.")
+
+
+def prompt_context_settings(state: "ContextPolicyState") -> Tuple[int, int, str]:
+    print("Set custom context policy")
+    print("  Set the window, auto-compaction threshold, and threshold scope.")
+    print("  Auto-compact at must be lower than the context window.")
+    if state.model is None:
+        print("  Configured model: Codex default (not set in config.toml)")
+    else:
+        print("  Configured model: {} (config.toml)".format(state.model))
+    if state.documented_context_capacity is not None:
+        print(
+            "  Documented model capacity: {:,} tokens (not the Codex default)".format(
+                state.documented_context_capacity
+            )
+        )
+    print(
+        "  Current context window: {}".format(
+            _context_setting_display(state, ("model_context_window",))
+        )
+    )
+    print(
+        "  Current auto-compact at: {}".format(
+            _context_setting_display(state, ("model_auto_compact_token_limit",))
+        )
+    )
+    print(
+        "  Current threshold scope: {}".format(
+            _context_setting_display(
+                state, ("model_auto_compact_token_limit_scope",)
+            )
+        )
+    )
+    context_window = _prompt_positive_integer("Context window tokens")
+    compact_at = _prompt_positive_integer("Auto-compact at tokens")
+    scope = _prompt_choice(
+        "Auto-compaction threshold scope",
+        "total",
+        CONTEXT_POLICY_SCOPES,
+    )
+    return context_window, compact_at, scope
+
+
 class CodexConfigEditor:
-    def __init__(self, codex_home: Path, *, dry_run: bool = False) -> None:
+    def __init__(
+        self,
+        codex_home: Path,
+        *,
+        dry_run: bool = False,
+        managed_keys: Optional[Sequence[Key]] = None,
+        stage: str = "configure",
+    ) -> None:
         self.codex_home = codex_home.expanduser()
         self.path = self.codex_home / "config.toml"
         self.backup = self.codex_home / "config.toml.hukuhaka-backup"
         self.dry_run = dry_run
+        self.managed_keys = tuple(sorted(_resolved_managed_keys(managed_keys)))
+        self.stage = stage
 
     def _read(self) -> Tuple[bytes, bool, int]:
         if not self.path.exists() and not self.path.is_symlink():
@@ -488,7 +714,7 @@ class CodexConfigEditor:
             raise StateError(
                 "Codex config.toml must be a regular file",
                 host="codex",
-                stage="configure",
+                stage=self.stage,
                 path=str(self.path),
             )
         content = self.path.read_bytes()
@@ -498,19 +724,43 @@ class CodexConfigEditor:
             raise StateError(
                 "Codex config.toml must be UTF-8",
                 host="codex",
-                stage="configure",
+                stage=self.stage,
                 path=str(self.path),
             ) from exc
         return content, True, stat.S_IMODE(self.path.stat().st_mode)
 
     def inspect(self) -> Dict[Key, str]:
         original, _, _ = self._read()
-        return current_values(original.decode("utf-8"))
+        return current_values(
+            original.decode("utf-8"),
+            managed_keys=self.managed_keys,
+            stage=self.stage,
+        )
 
-    def plan(self, settings: Mapping[Key, str]) -> ConfigPlan:
+    def plan(
+        self,
+        settings: Mapping[Key, str],
+        *,
+        remove: Sequence[Key] = (),
+    ) -> ConfigPlan:
         original, existed, mode = self._read()
-        proposed = update_config(original.decode("utf-8"), settings).encode("utf-8")
-        return ConfigPlan(self.path, original, proposed, existed, mode)
+        proposed = update_config(
+            original.decode("utf-8"),
+            settings,
+            remove=remove,
+            managed_keys=self.managed_keys,
+            stage=self.stage,
+        ).encode("utf-8")
+        return ConfigPlan(
+            self.path,
+            original,
+            proposed,
+            existed,
+            mode,
+            tuple(_canonical_key(key) for key in remove),
+            self.managed_keys,
+            self.stage,
+        )
 
     def _doctor(self) -> None:
         command = shutil.which("codex")
@@ -518,7 +768,7 @@ class CodexConfigEditor:
             raise InstallerError(
                 "codex CLI is required to validate global config",
                 host="codex",
-                stage="configure",
+                stage=self.stage,
                 operation="doctor",
             )
         environment = os.environ.copy()
@@ -541,7 +791,7 @@ class CodexConfigEditor:
                     ": " + detail if detail else ""
                 ),
                 host="codex",
-                stage="configure",
+                stage=self.stage,
                 operation="doctor",
             ) from exc
         if check.get("status") != "ok":
@@ -550,7 +800,7 @@ class CodexConfigEditor:
                     check.get("summary", "config.load was not ok")
                 ),
                 host="codex",
-                stage="configure",
+                stage=self.stage,
                 operation="doctor",
             )
 
@@ -568,7 +818,7 @@ class CodexConfigEditor:
             raise StateError(
                 "Codex config changed after the diff was prepared; review it again",
                 host="codex",
-                stage="configure",
+                stage=self.stage,
                 operation="verify-precondition",
                 path=str(self.path),
             )
@@ -588,7 +838,7 @@ class CodexConfigEditor:
                 raise StateError(
                     "Codex config validation failed and the original could not be restored",
                     host="codex",
-                    stage="configure",
+                    stage=self.stage,
                     operation="rollback-config",
                     path=str(self.path),
                 ) from rollback_error
@@ -597,7 +847,7 @@ class CodexConfigEditor:
             raise InstallerError(
                 "cannot update global Codex config: {}".format(exc),
                 host="codex",
-                stage="configure",
+                stage=self.stage,
                 operation="write-config",
                 path=str(self.path),
             ) from exc
@@ -612,23 +862,409 @@ class CodexConfigEditor:
             raise StateError(
                 "Codex config.toml is missing after component installation",
                 host="codex",
-                stage="configure",
+                stage=self.stage,
                 operation="verify",
                 path=str(self.path),
             )
-        expected = current_values(plan.proposed.decode("utf-8"))
-        actual = current_values(current.decode("utf-8"))
+        expected = current_values(
+            plan.proposed.decode("utf-8"),
+            managed_keys=plan.managed_keys,
+            stage=plan.stage,
+        )
+        actual = current_values(
+            current.decode("utf-8"),
+            managed_keys=plan.managed_keys,
+            stage=plan.stage,
+        )
         mismatched = [
             key for key, value in expected.items() if actual.get(key) != value
         ]
+        mismatched.extend(key for key in plan.removed if key in actual)
         if mismatched:
             raise StateError(
                 "managed Codex config changed during component installation: {}".format(
                     ".".join(mismatched[0])
                 ),
                 host="codex",
-                stage="configure",
+                stage=self.stage,
                 operation="verify",
                 path=str(self.path),
             )
         self._doctor()
+
+
+@dataclass(frozen=True)
+class ContextPolicyPlan:
+    action: str
+    settings: Dict[Key, str]
+    config: ConfigPlan
+    manifest_path: Path
+    manifest_original: bytes
+    manifest_proposed: Optional[bytes]
+    manifest_existed: bool
+    manifest_mode: int
+
+    @property
+    def changed(self) -> bool:
+        expected_manifest = (
+            b"" if self.manifest_proposed is None else self.manifest_proposed
+        )
+        return self.config.changed or self.manifest_original != expected_manifest
+
+    def diff(self) -> str:
+        return self.config.diff()
+
+
+@dataclass(frozen=True)
+class ContextPolicyState:
+    """Observed context overrides and whether Hukuhaka may change them."""
+
+    kind: str
+    settings: Mapping[Key, str]
+    model: Optional[str] = None
+    documented_context_capacity: Optional[int] = None
+
+    @property
+    def label(self) -> str:
+        return {
+            "default": "Codex/model defaults",
+            "managed": "custom (Hukuhaka managed)",
+            "unmanaged": "custom (not managed by Hukuhaka)",
+            "drifted": "drifted (Hukuhaka managed)",
+        }[self.kind]
+
+    @property
+    def source(self) -> str:
+        return {
+            "default": "Codex/model override",
+            "managed": "Hukuhaka managed override",
+            "unmanaged": "user override",
+            "drifted": "drifted override",
+        }[self.kind]
+
+    @property
+    def actionable(self) -> bool:
+        return self.kind in ("default", "managed")
+
+
+class CodexContextPolicy:
+    """Own one explicit context policy without touching general defaults."""
+
+    def __init__(self, codex_home: Path, *, dry_run: bool = False) -> None:
+        self.codex_home = codex_home.expanduser()
+        self.config = CodexConfigEditor(
+            self.codex_home,
+            dry_run=dry_run,
+            managed_keys=CONTEXT_POLICY_KEYS,
+            stage="context",
+        )
+        self.manifest_path = self.codex_home / CONTEXT_POLICY_MANIFEST
+        self.dry_run = dry_run
+
+    @staticmethod
+    def _key_name(key: Key) -> str:
+        return ".".join(key)
+
+    def _read_manifest(self) -> Tuple[bytes, bool, int]:
+        if not self.manifest_path.exists() and not self.manifest_path.is_symlink():
+            return b"", False, 0o600
+        if self.manifest_path.is_symlink() or not self.manifest_path.is_file():
+            raise StateError(
+                "Codex context policy manifest must be a regular file",
+                host="codex",
+                stage="context",
+                operation="read-manifest",
+                path=str(self.manifest_path),
+            )
+        return (
+            self.manifest_path.read_bytes(),
+            True,
+            stat.S_IMODE(self.manifest_path.stat().st_mode),
+        )
+
+    def _decode_manifest(self, raw: bytes) -> Dict[Key, str]:
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise StateError(
+                "Codex context policy manifest must be valid UTF-8 JSON",
+                host="codex",
+                stage="context",
+                operation="read-manifest",
+                path=str(self.manifest_path),
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schemaVersion") != 1
+            or set(payload) != {"schemaVersion", "settings"}
+            or not isinstance(payload.get("settings"), dict)
+        ):
+            raise StateError(
+                "Codex context policy manifest has an unsupported shape",
+                host="codex",
+                stage="context",
+                operation="read-manifest",
+                path=str(self.manifest_path),
+            )
+        raw_settings = payload["settings"]
+        expected_names = {self._key_name(key) for key in CONTEXT_POLICY_KEYS}
+        if set(raw_settings) != expected_names or not all(
+            isinstance(value, str) for value in raw_settings.values()
+        ):
+            raise StateError(
+                "Codex context policy manifest has invalid settings",
+                host="codex",
+                stage="context",
+                operation="read-manifest",
+                path=str(self.manifest_path),
+            )
+        settings = {
+            key: raw_settings[self._key_name(key)] for key in CONTEXT_POLICY_KEYS
+        }
+        self._validate_settings(settings)
+        return settings
+
+    @staticmethod
+    def _positive_integer(value: str, *, label: str) -> int:
+        if not value.isdigit() or int(value) <= 0:
+            raise StateError(
+                "{} must be a positive integer".format(label),
+                host="codex",
+                stage="context",
+                operation="validate-policy",
+            )
+        return int(value)
+
+    @classmethod
+    def _validate_settings(cls, settings: Mapping[Key, str]) -> None:
+        if set(settings) != set(CONTEXT_POLICY_KEYS):
+            raise StateError(
+                "context policy must set every context override",
+                host="codex",
+                stage="context",
+                operation="validate-policy",
+            )
+        window = cls._positive_integer(
+            settings[("model_context_window",)], label="context window"
+        )
+        compact = cls._positive_integer(
+            settings[("model_auto_compact_token_limit",)],
+            label="auto-compaction threshold",
+        )
+        if compact >= window:
+            raise StateError(
+                "auto-compaction threshold must be lower than the context window",
+                host="codex",
+                stage="context",
+                operation="validate-policy",
+            )
+        try:
+            scope = json.loads(
+                settings[("model_auto_compact_token_limit_scope",)]
+            )
+        except json.JSONDecodeError as exc:
+            raise StateError(
+                "context policy scope must be a quoted TOML string",
+                host="codex",
+                stage="context",
+                operation="validate-policy",
+            ) from exc
+        if scope not in CONTEXT_POLICY_SCOPES:
+            raise StateError(
+                "context policy scope must be one of: {}".format(
+                    ", ".join(CONTEXT_POLICY_SCOPES)
+                ),
+                host="codex",
+                stage="context",
+                operation="validate-policy",
+            )
+
+    def _manifest_bytes(self, settings: Mapping[Key, str]) -> bytes:
+        payload = {
+            "schemaVersion": 1,
+            "settings": {
+                self._key_name(key): settings[key] for key in CONTEXT_POLICY_KEYS
+            },
+        }
+        return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+    def _build_plan(
+        self, action: str, settings: Optional[Mapping[Key, str]] = None
+    ) -> ContextPolicyPlan:
+        manifest_original, manifest_existed, manifest_mode = self._read_manifest()
+        manifest_settings = (
+            self._decode_manifest(manifest_original) if manifest_existed else None
+        )
+        if action == "set":
+            assert settings is not None
+            next_settings = dict(settings)
+            self._validate_settings(next_settings)
+            config_plan = self.config.plan(next_settings)
+            manifest_proposed = self._manifest_bytes(next_settings)
+        elif action == "reset":
+            next_settings = {}  # type: Dict[Key, str]
+            config_plan = self.config.plan(
+                {}, remove=CONTEXT_POLICY_KEYS if manifest_existed else ()
+            )
+            manifest_proposed = None
+        else:
+            raise StateError(
+                "unsupported Codex context policy action: {}".format(action),
+                host="codex",
+                stage="context",
+                operation="plan-policy",
+            )
+
+        actual = current_values(
+            config_plan.original.decode("utf-8"),
+            managed_keys=CONTEXT_POLICY_KEYS,
+            stage="context",
+        )
+        if manifest_settings is None:
+            if actual:
+                raise StateError(
+                    "context overrides already exist and are not owned by Hukuhaka; preserving them",
+                    host="codex",
+                    stage="context",
+                    operation="validate-ownership",
+                    path=str(self.config.path),
+                )
+        elif actual != manifest_settings:
+            raise StateError(
+                "Hukuhaka context policy drifted; review the context overrides before changing them",
+                host="codex",
+                stage="context",
+                operation="validate-ownership",
+                path=str(self.config.path),
+            )
+
+        return ContextPolicyPlan(
+            action,
+            next_settings,
+            config_plan,
+            self.manifest_path,
+            manifest_original,
+            manifest_proposed,
+            manifest_existed,
+            manifest_mode,
+        )
+
+    def plan_set(
+        self, *, context_window: int, compact_at: int, scope: str
+    ) -> ContextPolicyPlan:
+        return self._build_plan(
+            "set",
+            {
+                ("model_context_window",): str(context_window),
+                ("model_auto_compact_token_limit",): str(compact_at),
+                ("model_auto_compact_token_limit_scope",): json.dumps(scope),
+            },
+        )
+
+    def plan_reset(self) -> ContextPolicyPlan:
+        return self._build_plan("reset")
+
+    def replan(self, plan: ContextPolicyPlan) -> ContextPolicyPlan:
+        """Refresh a displayed policy plan without widening its ownership."""
+        return self._build_plan(plan.action, plan.settings or None)
+
+    def state(self) -> ContextPolicyState:
+        manifest, exists, _ = self._read_manifest()
+        original, _, _ = self.config._read()
+        observed = current_values(
+            original.decode("utf-8"),
+            managed_keys=CONTEXT_POLICY_KEYS + (MODEL_KEY,),
+            stage="context",
+        )
+        actual = {
+            key: value
+            for key, value in observed.items()
+            if key in CONTEXT_POLICY_KEYS
+        }
+        model = _decode_string(observed.get(MODEL_KEY, ""), "") or None
+        documented_context_capacity = (
+            DOCUMENTED_MODEL_CONTEXT_CAPACITIES.get(model.lower())
+            if model is not None
+            else None
+        )
+        if not exists:
+            return ContextPolicyState(
+                "default" if not actual else "unmanaged",
+                actual,
+                model,
+                documented_context_capacity,
+            )
+        expected = self._decode_manifest(manifest)
+        return ContextPolicyState(
+            "managed" if actual == expected else "drifted",
+            actual,
+            model,
+            documented_context_capacity,
+        )
+
+    def status(self) -> str:
+        """Compatibility label for compact callers such as the installer menu."""
+        return self.state().label
+
+    def apply(self, plan: ContextPolicyPlan) -> bool:
+        if self.dry_run:
+            print("Codex context dry run complete. No files were modified.")
+            return False
+        with installer_state(self.codex_home, dry_run=False) as writable:
+            replanned = self._build_plan(plan.action, plan.settings or None)
+            if replanned != plan:
+                raise StateError(
+                    "Codex context policy changed after the diff was prepared; review it again",
+                    host="codex",
+                    stage="context",
+                    operation="verify-precondition",
+                    path=str(self.config.path),
+                )
+            if not plan.changed:
+                print(
+                    "Codex context policy already uses Codex defaults."
+                    if plan.action == "reset"
+                    else "Codex context policy already matches the selected values."
+                )
+                return False
+            assert writable
+            with FileTransaction(self.codex_home) as transaction:
+                if plan.config.changed:
+                    if plan.config.existed:
+                        transaction.write_bytes(
+                            self.config.backup,
+                            plan.config.original,
+                            plan.config.mode,
+                        )
+                    transaction.write_bytes(
+                        self.config.path,
+                        plan.config.proposed,
+                        plan.config.mode,
+                    )
+                if plan.manifest_proposed is None:
+                    transaction.remove(plan.manifest_path)
+                else:
+                    transaction.write_bytes(
+                        plan.manifest_path,
+                        plan.manifest_proposed,
+                        plan.manifest_mode,
+                    )
+                self.config._doctor()
+                transaction.commit()
+        print("  [ok] Codex context policy -> {}".format(self.config.path))
+        return True
+
+    def verify(self, plan: ContextPolicyPlan) -> None:
+        """Ensure component installation did not change the selected policy."""
+        if self.dry_run:
+            return
+        verified = self.replan(plan)
+        if verified.changed:
+            raise StateError(
+                "managed Codex context policy changed during component installation",
+                host="codex",
+                stage="context",
+                operation="verify",
+                path=str(self.config.path),
+            )
+        self.config._doctor()

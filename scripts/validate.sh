@@ -167,7 +167,8 @@ if [ -d "$SCRIPT_DIR/prepush/tests" ]; then
     if bash -n \
         "$SCRIPT_DIR/push-private.sh" \
         "$SCRIPT_DIR/push-preflight.sh" \
-        "$SCRIPT_DIR/prepush/pre-push"; then
+        "$SCRIPT_DIR/prepush/pre-push" \
+        "$SCRIPT_DIR/tests/run-codex-docker-e2e.sh"; then
         pass "private push shell entrypoints"
     else
         fail "private push shell entrypoints — syntax error"

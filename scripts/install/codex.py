@@ -349,7 +349,6 @@ class CodexEvidenceScoutDeployment:
         self.force = force
         self.target = codex_home / "agents" / "evidence-scout.toml"
         self.routing_target = codex_home / "AGENTS.md"
-        self.catalog_source = codex_home / "models_cache.json"
         self.catalog_target = codex_home / "models-luna-v2.json"
         self.override = codex_home / "AGENTS.override.md"
         self.manifest_path = codex_home / EVIDENCE_SCOUT_MANIFEST
@@ -411,7 +410,7 @@ class CodexEvidenceScoutDeployment:
                 path=str(self.manifest_path),
             )
         if (
-            data["schemaVersion"] not in (1, 2)
+            data["schemaVersion"] not in (1, 2, 3)
             or data["component"] != "evidence-scout"
             or data["agentTarget"] != "agents/evidence-scout.toml"
             or data["routingTarget"] != "AGENTS.md"
@@ -446,56 +445,24 @@ class CodexEvidenceScoutDeployment:
                 )
         return data
 
-    def _derive_catalog(self) -> Tuple[bytes, str]:
-        source = self._read_regular(
-            self.catalog_source, label="Codex model cache", missing_ok=False
-        )
-        try:
-            payload = json.loads(source.decode("utf-8"))
-        except json.JSONDecodeError as exc:
-            raise StateError(
-                "Codex model cache must contain valid JSON: {}".format(exc),
-                host="codex",
-                stage="evidence-scout",
-                path=str(self.catalog_source),
-            ) from exc
-        if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
-            raise StateError(
-                "Codex model cache must contain a models array",
-                host="codex",
-                stage="evidence-scout",
-                path=str(self.catalog_source),
-            )
-        matches = [
-            model
-            for model in payload["models"]
-            if isinstance(model, dict) and model.get("slug") == "gpt-5.6-luna"
-        ]
-        if len(matches) != 1:
-            raise StateError(
-                "Codex model cache must contain exactly one gpt-5.6-luna record",
-                host="codex",
-                stage="evidence-scout",
-                path=str(self.catalog_source),
-            )
-        version = matches[0].get("multi_agent_version")
-        if version not in ("v1", "v2"):
-            raise StateError(
-                "gpt-5.6-luna has unsupported multi_agent_version: {!r}".format(version),
-                host="codex",
-                stage="evidence-scout",
-                path=str(self.catalog_source),
-            )
-        matches[0]["multi_agent_version"] = "v2"
-        derived = (json.dumps(payload, indent=2, ensure_ascii=True) + "\n").encode(
-            "utf-8"
-        )
-        return derived, _hash(source)
-
     def _runtime_settings(self) -> Dict[Tuple[str, ...], str]:
-        settings = dict(EVIDENCE_SCOUT_SETTINGS)
-        settings[("model_catalog_json",)] = json.dumps(str(self.catalog_target))
-        return settings
+        return dict(EVIDENCE_SCOUT_SETTINGS)
+
+    def _legacy_cleanup(
+        self,
+        manifest: Optional[Dict[str, Any]],
+        catalog: bytes,
+    ) -> Tuple[bool, bool]:
+        if manifest is None or manifest["schemaVersion"] != 2:
+            return False, False
+        catalog_matches = bool(catalog) and _hash(catalog) == manifest["catalogHash"]
+        remove_catalog = catalog_matches or (bool(catalog) and self.force)
+        expected_pointer = json.dumps(str(self.catalog_target))
+        actual_pointer = self.config.inspect().get(("model_catalog_json",))
+        remove_pointer = actual_pointer == expected_pointer and (
+            catalog_matches or not catalog or self.force
+        )
+        return remove_catalog, remove_pointer
 
     def _validate_owned(
         self,
@@ -504,8 +471,6 @@ class CodexEvidenceScoutDeployment:
         bounds: Optional[Tuple[int, int]],
         manifest: Optional[Dict[str, Any]],
         catalog: bytes,
-        *,
-        validate_catalog: bool = True,
     ) -> None:
         if manifest is None:
             if bounds is not None:
@@ -535,7 +500,7 @@ class CodexEvidenceScoutDeployment:
             _hash(agent) != manifest["agentHash"]
             or _hash(routing[start:end]) != manifest["routingHash"]
         )
-        if validate_catalog and manifest["schemaVersion"] == 2:
+        if manifest["schemaVersion"] == 2:
             drifted = drifted or (
                 not catalog or _hash(catalog) != manifest["catalogHash"]
             )
@@ -548,7 +513,7 @@ class CodexEvidenceScoutDeployment:
 
     def _plan_deploy(
         self,
-    ) -> Tuple[bytes, bytes, bytes, Dict[str, Any], ConfigPlan]:
+    ) -> Tuple[bytes, bytes, Dict[str, Any], ConfigPlan, bool]:
         agent_source = self._read_regular(
             self.source, label="evidence-scout", missing_ok=False
         )
@@ -557,25 +522,15 @@ class CodexEvidenceScoutDeployment:
         )
         agent = self._read_regular(self.target, label="evidence-scout")
         routing = self._read_regular(self.routing_target, label="Codex AGENTS.md")
-        catalog_source, catalog_source_hash = self._derive_catalog()
-        catalog = self._read_regular(self.catalog_target, label="Luna v2 model catalog")
         bounds = _scout_bounds(routing)
         manifest = self._manifest()
+        catalog = (
+            self._read_regular(self.catalog_target, label="Luna v2 model catalog")
+            if manifest is not None and manifest["schemaVersion"] == 2
+            else b""
+        )
         self._validate_owned(agent, routing, bounds, manifest, catalog)
-
-        expected_pointer = self._runtime_settings()[("model_catalog_json",)]
-        actual_pointer = self.config.inspect().get(("model_catalog_json",))
-        if (
-            actual_pointer is not None
-            and actual_pointer != expected_pointer
-            and not self.force
-        ):
-            raise DriftError(
-                "model_catalog_json already points elsewhere; use --force to replace it",
-                host="codex",
-                stage="evidence-scout",
-                path=str(self.config.path),
-            )
+        remove_catalog, remove_pointer = self._legacy_cleanup(manifest, catalog)
 
         if manifest is None and agent and agent != agent_source and not self.force:
             raise DriftError(
@@ -584,19 +539,6 @@ class CodexEvidenceScoutDeployment:
                 stage="evidence-scout",
                 path=str(self.target),
             )
-        if (
-            manifest is None
-            and catalog
-            and catalog != catalog_source
-            and not self.force
-        ):
-            raise DriftError(
-                "an unmanaged Luna v2 model catalog already exists; use --force to replace it",
-                host="codex",
-                stage="evidence-scout",
-                path=str(self.catalog_target),
-            )
-
         block = _scout_block(routing_source)
         if bounds is None:
             prefix = b"" if not routing else (b"\n" if routing.endswith(b"\n") else b"\n\n")
@@ -610,23 +552,21 @@ class CodexEvidenceScoutDeployment:
             merged = routing[:start] + block + routing[end:]
 
         next_manifest = {
-            "schemaVersion": 2,
+            "schemaVersion": 3,
             "component": "evidence-scout",
             "version": self.version,
             "agentTarget": "agents/evidence-scout.toml",
             "agentHash": _hash(agent_source),
             "routingTarget": "AGENTS.md",
             "routingHash": _hash(block),
-            "catalogSource": "models_cache.json",
-            "catalogSourceHash": catalog_source_hash,
-            "catalogTarget": "models-luna-v2.json",
-            "catalogHash": _hash(catalog_source),
             "prefix": prefix.decode(),
             "suffix": suffix.decode(),
         }
-        return agent_source, merged, catalog_source, next_manifest, self.config.plan(
-            self._runtime_settings()
+        config_plan = self.config.plan(
+            self._runtime_settings(),
+            remove=(("model_catalog_json",),) if remove_pointer else (),
         )
+        return agent_source, merged, next_manifest, config_plan, remove_catalog
 
     def _write_config(self, transaction: FileTransaction, plan: ConfigPlan) -> None:
         if not plan.changed:
@@ -640,7 +580,7 @@ class CodexEvidenceScoutDeployment:
             self.uninstall()
             return
         with installer_state(self.codex_home, dry_run=self.dry_run) as writable:
-            agent, routing, catalog, manifest, config_plan = self._plan_deploy()
+            agent, routing, manifest, config_plan, remove_catalog = self._plan_deploy()
             routing_mode = _preserved_mode(self.routing_target)
             if self.override.exists():
                 print(
@@ -657,38 +597,41 @@ class CodexEvidenceScoutDeployment:
                     )
                 )
                 print("  [dry-run] enable multi-agent with concurrency ceiling 4")
-                print(
-                    "  [dry-run] generate Luna v2 model catalog -> {}".format(
-                        self.catalog_target
+                if remove_catalog:
+                    print(
+                        "  [dry-run] remove obsolete Luna v2 model catalog -> {}".format(
+                            self.catalog_target
+                        )
                     )
-                )
                 return
             with FileTransaction(self.codex_home) as transaction:
                 transaction.write_bytes(self.target, agent, 0o644)
                 transaction.write_bytes(self.routing_target, routing, routing_mode)
-                transaction.write_bytes(self.catalog_target, catalog, 0o644)
+                if remove_catalog:
+                    transaction.remove(self.catalog_target)
                 transaction.write_json(self.manifest_path, manifest)
                 self._write_config(transaction, config_plan)
                 self.config.verify(config_plan)
                 transaction.commit()
         print("  [ok] evidence-scout -> {}".format(self.target))
         print("  [ok] evidence-scout routing -> {}".format(self.routing_target))
-        print("  [ok] Luna v2 model catalog -> {}".format(self.catalog_target))
+        if remove_catalog:
+            print("  [ok] removed obsolete Luna v2 model catalog")
         print("  [ok] multi-agent enabled; concurrency ceiling 4")
 
-    def _plan_uninstall(self) -> Optional[bytes]:
+    def _plan_uninstall(self) -> Optional[Tuple[bytes, bool, ConfigPlan]]:
         manifest = self._manifest()
         if manifest is None:
             return None
         agent = self._read_regular(self.target, label="evidence-scout")
         routing = self._read_regular(self.routing_target, label="Codex AGENTS.md")
-        catalog = self._read_regular(self.catalog_target, label="Luna v2 model catalog")
-        bounds = _scout_bounds(routing)
-        # Runtime settings intentionally persist after uninstall, so catalog
-        # drift must not block removal of the agent and routing block.
-        self._validate_owned(
-            agent, routing, bounds, manifest, catalog, validate_catalog=False
+        catalog = (
+            self._read_regular(self.catalog_target, label="Luna v2 model catalog")
+            if manifest["schemaVersion"] == 2
+            else b""
         )
+        bounds = _scout_bounds(routing)
+        self._validate_owned(agent, routing, bounds, manifest, catalog)
         assert bounds is not None
         start, end = bounds
         prefix = manifest["prefix"].encode()
@@ -706,18 +649,26 @@ class CodexEvidenceScoutDeployment:
                 )
             prefix = b""
             suffix = b""
-        return routing[:start - len(prefix)] + routing[end + len(suffix):]
+        remove_catalog, remove_pointer = self._legacy_cleanup(manifest, catalog)
+        return (
+            routing[:start - len(prefix)] + routing[end + len(suffix):],
+            remove_catalog,
+            self.config.plan(
+                {}, remove=(("model_catalog_json",),) if remove_pointer else ()
+            ),
+        )
 
     def uninstall(self) -> None:
         if self.dry_run:
-            merged = self._plan_uninstall()
-            if merged is not None:
+            plan = self._plan_uninstall()
+            if plan is not None:
                 print("  [dry-run] remove evidence-scout and its routing block")
             return
         with installer_state(self.codex_home, dry_run=False) as writable:
-            merged = self._plan_uninstall()
-            if merged is None:
+            plan = self._plan_uninstall()
+            if plan is None:
                 return
+            merged, remove_catalog, config_plan = plan
             routing_mode = _preserved_mode(self.routing_target)
             assert writable
             with FileTransaction(self.codex_home) as transaction:
@@ -726,7 +677,12 @@ class CodexEvidenceScoutDeployment:
                     transaction.write_bytes(self.routing_target, merged, routing_mode)
                 else:
                     transaction.remove(self.routing_target)
+                if remove_catalog:
+                    transaction.remove(self.catalog_target)
                 transaction.remove(self.manifest_path)
+                if config_plan.changed:
+                    self._write_config(transaction, config_plan)
+                    self.config.verify(config_plan)
                 transaction.commit()
         print("  [ok] removed evidence-scout and its routing block")
 
@@ -740,9 +696,6 @@ class CodexEvidenceScoutDeployment:
             )
         agent = self._read_regular(self.target, label="evidence-scout")
         routing = self._read_regular(self.routing_target, label="Codex AGENTS.md")
-        catalog = self._read_regular(
-            self.catalog_target, label="Luna v2 model catalog", missing_ok=False
-        )
         bounds = _scout_bounds(routing)
         if bounds is None:
             raise InstallerError(
@@ -754,21 +707,10 @@ class CodexEvidenceScoutDeployment:
         if (
             _hash(agent) != manifest["agentHash"]
             or _hash(routing[start:end]) != manifest["routingHash"]
-            or manifest["schemaVersion"] != 2
-            or _hash(catalog) != manifest["catalogHash"]
+            or manifest["schemaVersion"] != 3
         ):
             raise InstallerError(
                 "evidence-scout files differ after install",
-                host="codex",
-                stage="verify",
-            )
-        expected_catalog, expected_source_hash = self._derive_catalog()
-        if (
-            catalog != expected_catalog
-            or manifest["catalogSourceHash"] != expected_source_hash
-        ):
-            raise InstallerError(
-                "Luna v2 model catalog differs from the current Codex model cache",
                 host="codex",
                 stage="verify",
             )

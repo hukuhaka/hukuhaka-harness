@@ -13,9 +13,14 @@ from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Set, 
 from .claude import ClaudeDeployment, resolve_claude_config_dir
 from .codex import CodexInstaller
 from .codex_config import (
+    CONTEXT_POLICY_SCOPES,
     RECOMMENDED_SETTINGS,
+    CodexContextPolicy,
     CodexConfigEditor,
     ConfigPlan,
+    ContextPolicyPlan,
+    prompt_context_action,
+    prompt_context_settings,
     prompt_settings,
 )
 from .common import InstallerError, StateError, load_json
@@ -270,6 +275,7 @@ class Installer:
         current: Mapping[str, Set[str]],
         installed_versions: Mapping[str, Mapping[str, str]],
         config_plan: Optional[ConfigPlan],
+        context_plan: Optional[ContextPolicyPlan],
     ) -> None:
         print("Installation plan")
         print("")
@@ -277,8 +283,9 @@ class Installer:
             desired = set(plan.components)
             before = current.get(plan.host, set())
             print(HOST_LABELS[plan.host])
+            print("  Components")
             print(
-                "  Install/update: {}".format(
+                "    Install/update: {}".format(
                     csv_value(plan.components) or "none"
                 )
             )
@@ -289,31 +296,59 @@ class Installer:
             )
             if version_summary:
                 width = max(len(name) for name, _ in version_summary)
-                print("  Component versions:")
+                print("    Component versions:")
                 for name, detail in version_summary:
-                    print("    {name:<{width}}  {detail}".format(
+                    print("      {name:<{width}}  {detail}".format(
                         name=name,
                         width=width,
                         detail=detail,
                     ))
             print(
-                "  Remove:         {}".format(
+                "    Remove:         {}".format(
                     csv_value(sorted(before - desired)) or "none"
                 )
             )
-            print("  Reset:          {}".format("yes" if plan.reset else "no"))
-            if plan.include_template:
-                print("  Reset template: yes")
-            if plan.configure_codex:
-                print("  Global config:  update")
             if plan.host == "codex" and "evidence-scout" in desired:
-                print("  Agent runtime:  multi-agent enabled; concurrency ceiling 4")
+                print("    Agent runtime:  multi-agent enabled; concurrency ceiling 4")
+            if plan.configure_codex:
+                print("  Settings")
+                print("    Global defaults: update")
+            if plan.change_context_window:
+                assert context_plan is not None
+                if not plan.configure_codex:
+                    print("  Settings")
+                action = (
+                    "set custom policy"
+                    if context_plan.action == "set"
+                    else "reset to Codex defaults"
+                )
+                print("    Context window: {}".format(action))
+            print("  Reset")
+            print(
+                "    Managed components: {}".format(
+                    "yes" if plan.reset else "no"
+                )
+            )
+            if plan.include_template:
+                print("    Instruction template: yes")
             print("")
+        if config_plan is not None or context_plan is not None:
+            print("Settings changes")
         if config_plan is not None:
+            print("Global Codex defaults")
             if config_plan.changed:
                 print(config_plan.diff(), end="")
             else:
                 print("Global Codex config already matches the selected values.")
+            print("")
+        if context_plan is not None:
+            print("Context window")
+            if context_plan.changed:
+                print(context_plan.diff(), end="")
+            elif context_plan.action == "reset":
+                print("Codex context policy already uses Codex defaults.")
+            else:
+                print("Codex context policy already matches the selected values.")
             print("")
 
     def _confirm(self) -> bool:
@@ -363,23 +398,30 @@ class Installer:
         config_changed: bool,
         config_applied: bool,
         config_errors: Sequence[str],
+        context_requested: bool = False,
+        context_changed: bool = False,
+        context_applied: bool = False,
+        context_errors: Sequence[str] = (),
     ) -> HostResult:
-        if not config_requested:
+        settings_requested = config_requested or context_requested
+        if not settings_requested:
             return component_result
 
-        details = list(config_errors)
+        setting_errors = list(config_errors) + list(context_errors)
+        details = list(setting_errors)
         if component_result.detail:
             details.append(component_result.detail)
 
-        if config_errors:
+        if setting_errors:
             status = (
                 "failed"
-                if component_result.status == "failed" and not config_applied
+                if component_result.status == "failed"
+                and not (config_applied or context_applied)
                 else "partial"
             )
         elif component_result.status in ("failed", "partial"):
             status = "partial"
-        elif component_result.status == "noop" and config_changed:
+        elif component_result.status == "noop" and (config_changed or context_changed):
             status = "success"
         else:
             status = component_result.status
@@ -436,15 +478,19 @@ class Installer:
             state = self._current_state(host)
             current[host] = state.components
             installed_versions[host] = state.plugin_versions
-            sections.append(
-                {
-                    "host": host,
-                    "label": HOST_LABELS[host],
-                    "version": self._host_version(host),
-                    "components": self._components(host),
-                    "selected": state.components or set(self._recommended(host)),
-                }
-            )
+            section = {
+                "host": host,
+                "label": HOST_LABELS[host],
+                "version": self._host_version(host),
+                "components": self._components(host),
+                "selected": state.components or set(self._recommended(host)),
+            }
+            if host == "codex":
+                section["context_status"] = CodexContextPolicy(
+                    self._codex().codex_home,
+                    dry_run=bool(getattr(self.args, "dry_run", False)),
+                ).state().label
+            sections.append(section)
 
         plans = prompt_install_plan(sys.stdin, sys.stdout, sections=sections)
         if not plans:
@@ -461,7 +507,36 @@ class Installer:
             settings = prompt_settings(config_editor.inspect())
             config_plan = config_editor.plan(settings)
 
-        self._print_plan(plans, current, installed_versions, config_plan)
+        context_policy = None  # type: Optional[CodexContextPolicy]
+        context_plan = None  # type: Optional[ContextPolicyPlan]
+        if any(plan.change_context_window for plan in plans):
+            context_policy = CodexContextPolicy(
+                self._codex().codex_home,
+                dry_run=bool(getattr(self.args, "dry_run", False)),
+            )
+            context_action = prompt_context_action(context_policy.state())
+            if context_action is None:
+                print("Exit. No changes were made.")
+                return 0
+            if context_action == "set":
+                context_window, compact_at, scope = prompt_context_settings(
+                    context_policy.state()
+                )
+                context_plan = context_policy.plan_set(
+                    context_window=context_window,
+                    compact_at=compact_at,
+                    scope=scope,
+                )
+            else:
+                context_plan = context_policy.plan_reset()
+
+        self._print_plan(
+            plans,
+            current,
+            installed_versions,
+            config_plan,
+            context_plan,
+        )
         if not self._confirm():
             print("Exit. No changes were made.")
             return 0
@@ -471,6 +546,10 @@ class Installer:
             config_errors = []  # type: List[str]
             config_ready = False
             config_applied = False
+            context_errors = []  # type: List[str]
+            context_ready = False
+            context_applied = False
+            applied_context_plan = None  # type: Optional[ContextPolicyPlan]
             if plan.host == "codex" and plan.configure_codex:
                 assert config_editor is not None and config_plan is not None
                 try:
@@ -481,6 +560,17 @@ class Installer:
                 except InstallerError as exc:
                     config_applied = exc.operation == "rollback-config"
                     config_errors.append(exc.render())
+
+            if plan.host == "codex" and plan.change_context_window:
+                assert context_policy is not None and context_plan is not None
+                try:
+                    applied_context_plan = context_policy.replan(context_plan)
+                    context_applied = bool(
+                        context_policy.apply(applied_context_plan)
+                    )
+                    context_ready = True
+                except InstallerError as exc:
+                    context_errors.append(exc.render())
 
             result = self._apply_host(plan, current.get(plan.host))
 
@@ -496,6 +586,18 @@ class Installer:
                 except InstallerError as exc:
                     config_errors.append(exc.render())
 
+            if (
+                plan.host == "codex"
+                and plan.change_context_window
+                and context_ready
+                and context_policy is not None
+                and applied_context_plan is not None
+            ):
+                try:
+                    context_policy.verify(applied_context_plan)
+                except InstallerError as exc:
+                    context_errors.append(exc.render())
+
             result = self._combine_codex_result(
                 result,
                 config_requested=plan.host == "codex" and plan.configure_codex,
@@ -504,6 +606,14 @@ class Installer:
                 ),
                 config_applied=config_applied,
                 config_errors=config_errors,
+                context_requested=(
+                    plan.host == "codex" and plan.change_context_window
+                ),
+                context_changed=bool(
+                    context_plan is not None and context_plan.changed
+                ),
+                context_applied=context_applied,
+                context_errors=context_errors,
             )
             results.append(result)
         return self._print_results(
@@ -515,6 +625,57 @@ class Installer:
             return self._recommended(host)
         return self._validate_components(host, csv_items(self.args.components))
 
+    def _context_policy(self) -> int:
+        policy = CodexContextPolicy(
+            self._codex().codex_home,
+            dry_run=bool(getattr(self.args, "dry_run", False)),
+        )
+        action = self.args.context_action
+        if action is None:
+            if not self._tty_available():
+                print(
+                    "installer: codex context requires a terminal or an explicit "
+                    "set/reset action",
+                    file=sys.stderr,
+                )
+                return 2
+            action = prompt_context_action(policy.state())
+            if action is None:
+                print("Exit. No changes were made.")
+                return 0
+            if action == "set":
+                context_window, compact_at, scope = prompt_context_settings(
+                    policy.state()
+                )
+                plan = policy.plan_set(
+                    context_window=context_window,
+                    compact_at=compact_at,
+                    scope=scope,
+                )
+            else:
+                plan = policy.plan_reset()
+        elif action == "set":
+            plan = policy.plan_set(
+                context_window=self.args.window,
+                compact_at=self.args.compact_at,
+                scope=self.args.scope,
+            )
+        else:
+            plan = policy.plan_reset()
+
+        print("Codex context policy")
+        if plan.changed:
+            print(plan.diff(), end="")
+        elif action == "reset":
+            print("Codex context policy already uses Codex defaults.")
+        else:
+            print("Codex context policy already matches the selected values.")
+        if not self._confirm():
+            print("Exit. No changes were made.")
+            return 0
+        policy.apply(plan)
+        return 0
+
     def automation(self) -> int:
         host = self.args.host
         if shutil.which(host) is None:
@@ -525,6 +686,9 @@ class Installer:
                 file=sys.stderr,
             )
             return 1
+
+        if self.args.action == "context":
+            return self._context_policy()
 
         if self.args.action == "configure":
             editor = CodexConfigEditor(
@@ -592,7 +756,7 @@ class Installer:
             reset=self.args.action == "reset",
             include_template=bool(getattr(self.args, "include_template", False)),
         )
-        self._print_plan([plan], current, installed_versions, None)
+        self._print_plan([plan], current, installed_versions, None, None)
         if not self._confirm():
             print("Exit. No changes were made.")
             return 0
@@ -663,6 +827,27 @@ def build_parser() -> argparse.ArgumentParser:
             configure.add_argument("--yes", action="store_true")
             configure.add_argument("--dry-run", action="store_true")
             _add_bootstrap_passthrough(configure)
+            context = actions.add_parser(
+                "context",
+                help="set or reset only Codex context-window overrides",
+            )
+            _add_bootstrap_passthrough(context)
+            context_actions = context.add_subparsers(dest="context_action")
+            context_set = context_actions.add_parser("set")
+            context_set.add_argument("--window", type=int, required=True)
+            context_set.add_argument("--compact-at", type=int, required=True)
+            context_set.add_argument(
+                "--scope",
+                choices=CONTEXT_POLICY_SCOPES,
+                default="total",
+            )
+            context_set.add_argument("--yes", action="store_true")
+            context_set.add_argument("--dry-run", action="store_true")
+            _add_bootstrap_passthrough(context_set)
+            context_reset = context_actions.add_parser("reset")
+            context_reset.add_argument("--yes", action="store_true")
+            context_reset.add_argument("--dry-run", action="store_true")
+            _add_bootstrap_passthrough(context_reset)
     return parser
 
 

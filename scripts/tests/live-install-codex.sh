@@ -188,44 +188,39 @@ version = sys.argv[3]
 
 agent = root / "agents" / "evidence-scout.toml"
 routing = root / "AGENTS.md"
-catalog_path = root / "models-luna-v2.json"
 manifest_path = root / ".hukuhaka-evidence-scout-manifest.json"
 config_path = root / "config.toml"
 
-for path in (agent, routing, catalog_path, manifest_path, config_path):
+for path in (agent, routing, manifest_path, config_path):
     if not path.is_file():
         raise SystemExit("missing installed Evidence Scout artifact: {}".format(path))
+if (root / "models-luna-v2.json").exists():
+    raise SystemExit("obsolete Luna v2 model catalog was installed")
 
 if (root / "models_cache.json").read_bytes() != source_cache.read_bytes():
     raise SystemExit("models_cache.json changed")
 
-catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-expected = json.loads(source_cache.read_text(encoding="utf-8"))
-for model in expected["models"]:
-    if model.get("slug") == "gpt-5.6-luna":
-        model["multi_agent_version"] = "v2"
-if catalog != expected:
-    raise SystemExit("derived model catalog changed fields other than Luna multi_agent_version")
-
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 if manifest.get("version") != version:
     raise SystemExit("manifest version {!r} != {!r}".format(manifest.get("version"), version))
+if manifest.get("schemaVersion") != 3:
+    raise SystemExit("Evidence Scout manifest is not schema v3")
+if any(key.startswith("catalog") for key in manifest):
+    raise SystemExit("Evidence Scout manifest still owns a model catalog")
 
 routing_text = routing.read_text(encoding="utf-8")
 if routing_text.count("<!-- hukuhaka-evidence-scout:begin -->") != 1 or routing_text.count("<!-- hukuhaka-evidence-scout:end -->") != 1:
     raise SystemExit("Evidence Scout routing marker count differs")
 
 config = config_path.read_text(encoding="utf-8")
-pointer = 'model_catalog_json = {}'.format(json.dumps(str(catalog_path)))
 for expected_line in (
-    pointer,
     "multi_agent = true",
     "max_concurrent_threads_per_session = 4",
 ):
     if expected_line not in config:
         raise SystemExit("missing config setting: {}".format(expected_line))
-if config.index(pointer) > config.index("[features]"):
-    raise SystemExit("model_catalog_json is not top-level")
+if "model_catalog_json" in config:
+    raise SystemExit("obsolete model_catalog_json pointer was installed")
 if re.search(r"(?m)^\s*(?:agents\.)?max_threads\s*=", config):
     raise SystemExit("legacy agents.max_threads was not migrated")
 if config.count("max_concurrent_threads_per_session = 4") != 1:

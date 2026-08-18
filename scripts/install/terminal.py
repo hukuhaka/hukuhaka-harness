@@ -11,6 +11,11 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, TextIO, T
 CLEAR = "\x1b[2J\x1b[H"
 HIDE_CURSOR = "\x1b[?25l"
 SHOW_CURSOR = "\x1b[?25h"
+SECTION_LABELS = {
+    "components-section": "Components",
+    "settings-section": "Settings",
+    "reset-section": "Reset",
+}
 
 
 @dataclass(frozen=True)
@@ -20,6 +25,7 @@ class HostInstallPlan:
     reset: bool = False
     include_template: bool = False
     configure_codex: bool = False
+    change_context_window: bool = False
 
 
 @dataclass
@@ -33,6 +39,8 @@ class _HostState:
     reset: bool = False
     include_template: bool = False
     configure_codex: bool = False
+    context_status: str = ""
+    change_context_window: bool = False
 
 
 def csv_items(value: str) -> List[str]:
@@ -69,12 +77,16 @@ def _rows(states: Sequence[_HostState]) -> List[Tuple[str, int, int]]:
     rows = []  # type: List[Tuple[str, int, int]]
     for host_index, state in enumerate(states):
         rows.append(("header", host_index, -1))
+        rows.append(("components-section", host_index, -1))
         rows.append(("host", host_index, -1))
         for component_index, _ in enumerate(state.components):
             rows.append(("component", host_index, component_index))
         rows.append(("recommended", host_index, -1))
         if state.host == "codex":
+            rows.append(("settings-section", host_index, -1))
             rows.append(("configure", host_index, -1))
+            rows.append(("context", host_index, -1))
+        rows.append(("reset-section", host_index, -1))
         rows.append(("reset", host_index, -1))
         rows.append(("template", host_index, -1))
     rows.extend((("install", -1, -1), ("exit", -1, -1)))
@@ -98,6 +110,9 @@ def _render(
                 " ({})".format(state.version) if state.version else ""
             )
             output.write("{} — {}\n".format(state.label, detail))
+            continue
+        if kind in SECTION_LABELS:
+            output.write("  {}\n".format(SECTION_LABELS[kind]))
             continue
         if kind == "install":
             output.write("\n{}Install\n".format(marker))
@@ -141,11 +156,19 @@ def _render(
                 )
             )
         elif kind == "recommended":
-            output.write("{}    Select recommended\n".format(marker))
+            output.write("{}    Select recommended components\n".format(marker))
         elif kind == "configure":
             output.write(
                 "{}    [{}] Configure global Codex defaults\n".format(
                     marker, "x" if state.configure_codex else " "
+                )
+            )
+        elif kind == "context":
+            output.write(
+                "{}    [{}] Configure context & auto-compaction ({})\n".format(
+                    marker,
+                    "x" if state.change_context_window else " ",
+                    state.context_status,
                 )
             )
         elif kind == "reset":
@@ -180,11 +203,16 @@ def prompt_install_plan(
             enabled=True,
             components=list(section["components"]),
             selected=set(section["selected"]),
+            context_status=str(section.get("context_status", "")),
         )
         for section in sections
     ]
     rows = _rows(states)
-    selectable = [index for index, row in enumerate(rows) if row[0] != "header"]
+    selectable = [
+        index
+        for index, row in enumerate(rows)
+        if row[0] != "header" and row[0] not in SECTION_LABELS
+    ]
     cursor_position = 0
     cursor = selectable[cursor_position]
     key_iterator = iter(keys) if keys is not None else None
@@ -220,6 +248,7 @@ def prompt_install_plan(
                             reset=state.reset,
                             include_template=state.include_template,
                             configure_codex=state.configure_codex,
+                            change_context_window=state.change_context_window,
                         )
                         for state in states
                         if state.enabled
@@ -244,6 +273,8 @@ def prompt_install_plan(
                     }
                 elif kind == "configure" and state.enabled:
                     state.configure_codex = not state.configure_codex
+                elif kind == "context" and state.enabled:
+                    state.change_context_window = not state.change_context_window
                 elif kind == "reset" and state.enabled:
                     state.reset = not state.reset
                     if not state.reset:

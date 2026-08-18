@@ -872,6 +872,30 @@ class InstallerSelectionTests(unittest.TestCase):
         self.assertEqual("1.2.3", args.version)
         self.assertEqual(".", args.source_dir)
 
+    def test_context_set_parser_is_separate_from_global_configure(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "--repo-root",
+                str(ROOT),
+                "codex",
+                "context",
+                "set",
+                "--window",
+                "800000",
+                "--compact-at",
+                "720000",
+                "--scope",
+                "body_after_prefix",
+                "--yes",
+            ]
+        )
+
+        self.assertEqual("context", args.action)
+        self.assertEqual("set", args.context_action)
+        self.assertEqual(800000, args.window)
+        self.assertEqual(720000, args.compact_at)
+        self.assertEqual("body_after_prefix", args.scope)
+
     def test_interactive_continues_to_codex_after_claude_failure(self) -> None:
         installer = self.installer()
         plans = [
@@ -948,6 +972,136 @@ class InstallerSelectionTests(unittest.TestCase):
         self.assertEqual(["config", "components", "verify"], events)
         result = print_results.call_args.args[0][0]
         self.assertEqual("success", result.status)
+
+    def test_interactive_applies_context_before_components_and_verifies(self) -> None:
+        installer = self.installer()
+        plans = [
+            HostInstallPlan(
+                "codex",
+                ["agents-md"],
+                change_context_window=True,
+            )
+        ]
+        context_plan = mock.Mock(action="set", changed=True)
+        applied_context_plan = mock.Mock(action="set", changed=True)
+        context_policy = mock.Mock()
+        context_policy.status.return_value = "Codex default"
+        context_policy.plan_set.return_value = context_plan
+        context_policy.replan.return_value = applied_context_plan
+        events = []
+        context_policy.apply.side_effect = lambda *args: events.append("context")
+        context_policy.verify.side_effect = lambda *args: events.append(
+            "context-verify"
+        )
+
+        def apply_host(*args, **kwargs):
+            events.append("components")
+            return HostResult("codex", "success")
+
+        with mock.patch.object(installer, "_tty_available", return_value=True), \
+             mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
+             mock.patch.object(
+                 installer,
+                 "_current_state",
+                 return_value=HostComponentState(set(), {}),
+             ), \
+             mock.patch.object(installer, "_host_version", return_value="test"), \
+             mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
+             mock.patch("scripts.install.main.prompt_context_action", return_value="set"), \
+             mock.patch(
+                 "scripts.install.main.prompt_context_settings",
+                 return_value=(800000, 720000, "total"),
+             ), \
+             mock.patch(
+                 "scripts.install.main.CodexContextPolicy",
+                 return_value=context_policy,
+             ), \
+             mock.patch.object(installer, "_confirm", return_value=True), \
+             mock.patch.object(installer, "_apply_host", side_effect=apply_host), \
+             mock.patch.object(installer, "_print_results", return_value=0) as print_results:
+            self.assertEqual(0, installer.interactive())
+
+        self.assertEqual(["context", "components", "context-verify"], events)
+        context_policy.plan_set.assert_called_once_with(
+            context_window=800000,
+            compact_at=720000,
+            scope="total",
+        )
+        context_policy.replan.assert_called_once_with(context_plan)
+        context_policy.apply.assert_called_once_with(applied_context_plan)
+        context_policy.verify.assert_called_once_with(applied_context_plan)
+        result = print_results.call_args.args[0][0]
+        self.assertEqual("success", result.status)
+
+    def test_interactive_replans_context_after_global_config_update(self) -> None:
+        installer = self.installer()
+        plans = [
+            HostInstallPlan(
+                "codex",
+                ["agents-md"],
+                configure_codex=True,
+                change_context_window=True,
+            )
+        ]
+        config_plan = mock.Mock(changed=True)
+        config_editor = mock.Mock()
+        config_editor.inspect.return_value = {}
+        config_editor.plan.return_value = config_plan
+        context_plan = mock.Mock(action="set", changed=True)
+        applied_context_plan = mock.Mock(action="set", changed=True)
+        context_policy = mock.Mock()
+        context_policy.status.return_value = "Codex default"
+        context_policy.plan_set.return_value = context_plan
+        context_policy.replan.return_value = applied_context_plan
+        events = []
+        config_editor.apply.side_effect = lambda *args, **kwargs: events.append(
+            "config"
+        )
+        config_editor.verify.side_effect = lambda *args, **kwargs: events.append(
+            "config-verify"
+        )
+        context_policy.apply.side_effect = lambda *args: events.append("context")
+        context_policy.verify.side_effect = lambda *args: events.append(
+            "context-verify"
+        )
+
+        def apply_host(*args, **kwargs):
+            events.append("components")
+            return HostResult("codex", "success")
+
+        with mock.patch.object(installer, "_tty_available", return_value=True), \
+             mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
+             mock.patch.object(
+                 installer,
+                 "_current_state",
+                 return_value=HostComponentState(set(), {}),
+             ), \
+             mock.patch.object(installer, "_host_version", return_value="test"), \
+             mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
+             mock.patch("scripts.install.main.prompt_settings", return_value={}), \
+             mock.patch("scripts.install.main.prompt_context_action", return_value="set"), \
+             mock.patch(
+                 "scripts.install.main.prompt_context_settings",
+                 return_value=(800000, 720000, "total"),
+             ), \
+             mock.patch(
+                 "scripts.install.main.CodexConfigEditor",
+                 return_value=config_editor,
+             ), \
+             mock.patch(
+                 "scripts.install.main.CodexContextPolicy",
+                 return_value=context_policy,
+             ), \
+             mock.patch.object(installer, "_confirm", return_value=True), \
+             mock.patch.object(installer, "_apply_host", side_effect=apply_host), \
+             mock.patch.object(installer, "_print_results", return_value=0):
+            self.assertEqual(0, installer.interactive())
+
+        self.assertEqual(
+            ["config", "context", "components", "config-verify", "context-verify"],
+            events,
+        )
+        context_policy.replan.assert_called_once_with(context_plan)
 
     def test_interactive_continues_components_after_config_failure(self) -> None:
         installer = self.installer()
@@ -1063,6 +1217,42 @@ class InstallerSelectionTests(unittest.TestCase):
         )
 
         self.assertEqual("partial", result.status)
+
+    def test_installation_plan_groups_components_settings_and_reset(self) -> None:
+        installer = self.installer(
+            "codex",
+            "install",
+            "--recommended",
+            "--yes",
+        )
+        config_plan = mock.Mock(changed=False)
+        context_plan = mock.Mock(action="reset", changed=False)
+        output = io.StringIO()
+
+        with contextlib.redirect_stdout(output):
+            installer._print_plan(
+                [
+                    HostInstallPlan(
+                        "codex",
+                        ["agents-md"],
+                        reset=True,
+                        include_template=True,
+                        configure_codex=True,
+                        change_context_window=True,
+                    )
+                ],
+                {"codex": {"agents-md"}},
+                {"codex": {}},
+                config_plan,
+                context_plan,
+            )
+
+        rendered = output.getvalue()
+        self.assertLess(rendered.index("  Components"), rendered.index("  Settings"))
+        self.assertLess(rendered.index("  Settings"), rendered.index("  Reset"))
+        self.assertIn("Global defaults: update", rendered)
+        self.assertIn("Context window: reset to Codex defaults", rendered)
+        self.assertIn("Managed components: yes", rendered)
 
 
 class CodexPluginCacheTests(unittest.TestCase):
@@ -1328,6 +1518,9 @@ class PlainTerminalSelectionTests(unittest.TestCase):
         rendered = output.getvalue()
         self.assertIn("Claude Code", rendered)
         self.assertNotIn("Codex", rendered)
+        self.assertIn("Components", rendered)
+        self.assertIn("Reset", rendered)
+        self.assertNotIn("Settings", rendered)
 
     def test_codex_global_config_is_opt_in(self) -> None:
         output = io.StringIO()
@@ -1358,13 +1551,60 @@ class PlainTerminalSelectionTests(unittest.TestCase):
                 "down",
                 "down",
                 "down",
+                "down",
                 "enter",
             ),
         )
 
         self.assertEqual(1, len(plans))
         self.assertTrue(plans[0].configure_codex)
-        self.assertIn("Configure global Codex defaults", output.getvalue())
+        rendered = output.getvalue()
+        self.assertIn("Configure global Codex defaults", rendered)
+        self.assertIn("Select recommended components", rendered)
+        self.assertLess(rendered.index("Components"), rendered.index("Settings"))
+        self.assertLess(rendered.index("Settings"), rendered.index("Reset"))
+
+    def test_codex_context_window_is_opt_in_and_shows_its_status(self) -> None:
+        output = io.StringIO()
+        plans = prompt_install_plan(
+            io.StringIO(),
+            output,
+            sections=[
+                {
+                    "host": "codex",
+                    "label": "Codex",
+                    "version": "0.147.0",
+                    "components": [
+                        {
+                            "name": "hukuhaka-report-planner",
+                            "kind": "plugin",
+                            "default": True,
+                            "lifecycle": "supported",
+                        }
+                    ],
+                    "selected": {"hukuhaka-report-planner"},
+                    "context_status": "Codex/model defaults",
+                }
+            ],
+            keys=(
+                "down",
+                "down",
+                "down",
+                "down",
+                "toggle",
+                "down",
+                "down",
+                "down",
+                "enter",
+            ),
+        )
+
+        self.assertEqual(1, len(plans))
+        self.assertTrue(plans[0].change_context_window)
+        self.assertIn(
+            "Configure context & auto-compaction (Codex/model defaults)",
+            output.getvalue(),
+        )
 
     def test_enabled_host_with_no_components_is_an_exact_empty_state(self) -> None:
         plans = prompt_install_plan(

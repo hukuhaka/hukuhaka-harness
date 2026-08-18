@@ -7,6 +7,30 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.13] — 2026-08-18
+
+### Added
+
+- Added `codex context` for an explicit custom context-window policy or a
+  reset to Codex defaults. It changes only the context-window, auto-compaction,
+  and threshold-scope settings; recommended installs, plugin lifecycle, model
+  selection, and other global preferences remain untouched.
+- Added the same context-window policy as an independent Codex selection in
+  the interactive installer.
+
+### Fixed
+
+- Codex reinstall after an Evidence Scout uninstall now handles native quoted
+  plugin tables without misreading a plugin's `enabled` value as a duplicate
+  `agents.enabled` setting.
+
+### Changed
+
+- Evidence Scout now uses Codex's native Luna subagent routing. New installs no
+  longer generate or select a modified model catalog, and updates safely remove
+  the exact obsolete catalog override owned by an older Evidence Scout
+  manifest while preserving user-owned catalog settings.
+
 ## [1.1.12] — 2026-08-13
 
 ### Fixed
