@@ -103,7 +103,7 @@ function emitReviewGateNudge(input) {
       "auto-reviews each turn's code changes before Claude stops — is currently OFF. " +
       "Enable it with /hukuhaka-codex:setup --enable-review-gate (blocking) or --report-only " +
       "(never blocks). You can also run /hukuhaka-codex:setup --enable-stuck-detector to get " +
-      "nudged toward a Codex second opinion after a streak of command failures.";
+      "nudged toward a Codex second opinion after three Bash failures within five minutes.";
     process.stdout.write(
       `${JSON.stringify({
         hookSpecificOutput: {

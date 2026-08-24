@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- Prevented the Stop review gate from rerunning after its own continuation.
+- Defined stuck detection precisely as three Bash failures within five minutes; successful commands remain outside the detector.
+- Made no-flag rescue execution consistently foreground, with background execution opt-in only.
+
 ## 0.4.0
 
 - Renamed the upstream-derived `gpt-5-4-prompting` guidance to model-neutral `codex-prompting` for rescue, duel, and debate tasks.

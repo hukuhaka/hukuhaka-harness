@@ -7,6 +7,20 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.14] — 2026-08-24
+
+### Fixed
+
+- Updated **`hukuhaka-codex@0.4.1`** so a blocking Stop review does not
+  rerun after its own continuation. Stuck detection now states its actual
+  contract—three Bash failures within five minutes—and no-flag rescue runs
+  consistently in the foreground.
+
+### Changed
+
+- Added deterministic plugin metadata, hook schema, and documentation-link
+  validation, plus separate current authoring routes for Claude Code and Codex.
+
 ## [1.1.13] — 2026-08-18
 
 ### Added

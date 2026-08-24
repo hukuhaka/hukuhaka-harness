@@ -17,7 +17,7 @@ imply that a Claude Code plugin is portable to Codex.
 | **hukuhaka-report-planner** | `0.6.0` | Supported | Claude Code, Codex | Frames and structures visual-document requests, directs source-backed anchor construction, and records a finalized `spec.md`. Explicit plan requests stop there; artifact requests delegate construction and visual verification to one designer subagent. |
 | **hukuhaka-engineering-plan** | `0.2.1` | Supported | Claude Code, Codex | Produces repository-grounded implementation plans with closed impact surfaces, exact change deltas, and requirement-to-verification mapping. |
 | **hukuhaka-worklog** | `0.3.0` | Supported | Claude Code, Codex | Reads current work at the first non-trivial project task, tracks lifecycle changes from natural requests, records completed or closed outcomes, and runs setup, status, and archive before model invocation. |
-| **hukuhaka-codex** | `0.4.0` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
+| **hukuhaka-codex** | `0.4.1` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
 | **CLAUDE.md template** | — | Supported | Claude Code only | Shared scoped-change and verification policy with Claude-specific `spec.md` sign-off and attribution-free commits, deployed to `~/.claude/CLAUDE.md`. |
 | **AGENTS.md template** | — | Supported | Codex only | Codex policy for scoped change previews, evidence-backed verification, compact-resilient task state, and a safe local Git lifecycle, merged into `$CODEX_HOME/AGENTS.md`. |
 | **Evidence Scout** | — | Supported | Codex only | Installs a Luna max, read-only custom agent plus compact routing guidance for dynamic parallel repository exploration while the primary retains decisions, writes, and final verification. |
@@ -163,6 +163,11 @@ codex plugin add hukuhaka-report-planner@hukuhaka-harness
 codex plugin add hukuhaka-engineering-plan@hukuhaka-harness
 codex plugin add hukuhaka-worklog@hukuhaka-harness
 ```
+
+The native marketplace command follows the repository state selected by Codex
+and is convenient for local development. For a reproducible release-equivalent
+install, use `scripts/install.sh`; remote installer runs resolve and pin the
+matching `vX.Y.Z` harness tag and restore the previous ref if an update fails.
 
 The Codex marketplace intentionally exposes only the components with native
 Codex packaging. Invoke the document planner as `$hukuhaka-report-planner`, the

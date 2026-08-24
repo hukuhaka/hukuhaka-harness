@@ -1,6 +1,6 @@
 {
   "name": "hukuhaka-codex",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Codex + Claude collaboration harness. Adds plan-then-implement, review-loop, dual-solve synthesis, and a full plan-build-review loop on top of the OpenAI Codex runtime.",
   "author": {
     "name": "hukuhaka"

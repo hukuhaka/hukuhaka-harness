@@ -27,7 +27,8 @@ Modifications by hukuhaka (NOT endorsed by OpenAI):
 - Adapted the upstream model-specific prompting skill as model-neutral
   "codex-prompting" guidance, while moving plan ownership into "codex-plan".
 - Changed rescue and proactive behavior to be read-only by default and added
-  opt-in stuck detection and report-only stop review.
+  opt-in five-minute Bash failure detection, report-only stop review, and
+  Stop-continuation loop prevention.
 - Added Codex CLI runtime fingerprinting so a broker created by an older CLI
   is recycled after an upgrade.
 - Adapted app-server initialization and startup errors for newer Codex CLI

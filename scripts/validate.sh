@@ -209,9 +209,21 @@ else
 fi
 
 if python3 "$SCRIPT_DIR/tests/check-host-support.py" > "$VALIDATE_TMP/host-support.log" 2>&1; then
-    pass "report-planner Claude/Codex contract"
+    pass "dual-host component contracts"
 else
     fail "host support — $(tail -3 "$VALIDATE_TMP/host-support.log" | tr '\n' ' ')"
+fi
+
+if python3 "$SCRIPT_DIR/tests/plugin_contracts.py" > "$VALIDATE_TMP/plugin-contracts.log" 2>&1; then
+    pass "plugin manifests, skill metadata, and hook schemas"
+else
+    fail "plugin contracts — $(tail -6 "$VALIDATE_TMP/plugin-contracts.log" | tr '\n' ' ')"
+fi
+
+if python3 "$SCRIPT_DIR/tests/document_contracts.py" > "$VALIDATE_TMP/document-contracts.log" 2>&1; then
+    pass "tracked documentation links and current contracts"
+else
+    fail "document contracts — $(tail -6 "$VALIDATE_TMP/document-contracts.log" | tr '\n' ' ')"
 fi
 
 # ── 4. Official-docs refresh script ─────────────────────────────────
@@ -246,6 +258,7 @@ fi
 
 CODEX_TESTS=(
     "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-broker.test.mjs"
+    "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-hooks.test.mjs"
     "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-prompting.test.mjs"
     "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-transfer.test.mjs"
 )

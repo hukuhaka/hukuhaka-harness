@@ -2,8 +2,8 @@
 
 // PostToolUseFailure hook (matcher: Bash). Opt-in via config `stuckDetector`.
 //
-// Deterministic "detect -> surface" proactive trigger: it counts consecutive
-// Bash failures and, after a short streak, nudges Claude to consider a Codex
+// Deterministic "detect -> surface" proactive trigger: it counts Bash failures
+// within a five-minute window and, after three, nudges Claude to consider a Codex
 // second opinion. It NEVER acts on its own (no delegation, no edits) — it only
 // adds a one-line note to Claude's context. This is the safe shape of proactive
 // Codex use: a deterministic signal, not free-form orchestration.
@@ -17,8 +17,8 @@ import process from "node:process";
 import { getConfig, setConfig } from "./lib/state.mjs";
 import { resolveWorkspaceRoot } from "./lib/workspace.mjs";
 
-const WINDOW_MS = 5 * 60 * 1000; // failures further apart than this restart the streak
-const THRESHOLD = 3; // consecutive failures before nudging
+const WINDOW_MS = 5 * 60 * 1000; // failures further apart than this restart the count
+const THRESHOLD = 3; // failures within the window before nudging
 const COOLDOWN_MS = 10 * 60 * 1000; // do not re-nudge within this window
 
 function readHookInput() {
@@ -50,29 +50,39 @@ function main() {
 
   const now = Date.now();
   const prev = config.stuckState ?? {};
-  const withinWindow = typeof prev.lastFailureAt === "number" && now - prev.lastFailureAt <= WINDOW_MS;
-  const count = (withinWindow ? Number(prev.count) || 0 : 0) + 1;
+  const previousCount = Number(prev.count) || 0;
+  const withinWindow =
+    previousCount > 0 &&
+    typeof prev.windowStartedAt === "number" &&
+    now - prev.windowStartedAt <= WINDOW_MS;
+  const count = (withinWindow ? previousCount : 0) + 1;
+  const windowStartedAt = withinWindow ? prev.windowStartedAt : now;
 
   let lastNudgeAt = Number(prev.lastNudgeAt) || 0;
-  const cooledDown = now - lastNudgeAt > COOLDOWN_MS;
+  const cooledDown = now - lastNudgeAt >= COOLDOWN_MS;
 
   if (count >= THRESHOLD && cooledDown) {
     emit({
       hookSpecificOutput: {
         hookEventName: "PostToolUseFailure",
         additionalContext:
-          `hukuhaka-codex: ${count} Bash commands have failed in a row, which often means the current approach is stuck. ` +
+          `hukuhaka-codex: ${count} Bash commands failed within five minutes, which often means the current approach is stuck. ` +
           "Consider a Codex second opinion before pushing further — /hukuhaka-codex:rescue for a read-only diagnosis/root-cause pass, " +
           "or /hukuhaka-codex:duel to solve it two ways. If you already know the fix, ignore this."
       }
     });
     lastNudgeAt = now;
-    // Reset the streak after nudging so the next nudge needs a fresh streak.
-    setConfig(workspaceRoot, "stuckState", { count: 0, lastFailureAt: now, lastNudgeAt });
+    // Reset the count after nudging so the next nudge needs a fresh window.
+    setConfig(workspaceRoot, "stuckState", {
+      count: 0,
+      windowStartedAt: now,
+      lastFailureAt: now,
+      lastNudgeAt
+    });
     return;
   }
 
-  setConfig(workspaceRoot, "stuckState", { count, lastFailureAt: now, lastNudgeAt });
+  setConfig(workspaceRoot, "stuckState", { count, windowStartedAt, lastFailureAt: now, lastNudgeAt });
 }
 
 try {

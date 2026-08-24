@@ -11,6 +11,17 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class ValidateCliTests(unittest.TestCase):
+    def test_official_refresh_tracks_current_codex_index_and_prunes_generated_stale_docs(self) -> None:
+        script_path = ROOT / "scripts" / "maintenance" / "refresh-officials.sh"
+        if not script_path.is_file():
+            self.skipTest("private official-docs refresh script is not in the public checkout")
+        script = script_path.read_text(encoding="utf-8")
+
+        self.assertIn('LLMS_URL="https://learn.chatgpt.com/docs/llms.txt"', script)
+        self.assertIn("https://learn\\.chatgpt\\.com/docs/", script)
+        self.assertIn("prune_stale_docs", script)
+        self.assertIn('-path "$DEST/openai" -prune', script)
+
     def test_validation_probes_do_not_pipe_into_early_exit_consumers(self) -> None:
         script = (ROOT / "scripts" / "validate.sh").read_text(encoding="utf-8")
 

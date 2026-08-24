@@ -8,7 +8,7 @@ the session.
 This is a modified Apache-2.0 distribution of OpenAI's official `codex` plugin.
 See [`NOTICE`](NOTICE) and [`UPSTREAM-SYNC.md`](UPSTREAM-SYNC.md) for provenance.
 
-Current local version: `0.4.0`. The fully incorporated official baseline is
+Current local version: `0.4.1`. The fully incorporated official baseline is
 `codex-plugin-cc` v1.0.4; upstream has been audited through v1.0.6 with later
 changes adopted selectively. This plugin remains Apache-2.0 even though the
 containing repository uses MIT for its other components.
@@ -49,12 +49,16 @@ all off by default):
   **blocks** the stop until findings are addressed.
 - `setup --report-only` — same review, but **never blocks**; findings are
   surfaced as a note (you still wait for the review at stop time).
-- `setup --enable-stuck-detector` — after a streak of Bash failures, Claude is
+- `setup --enable-stuck-detector` — after three Bash failures within five minutes, Claude is
   **nudged** to consider `/hukuhaka-codex:rescue` or `/hukuhaka-codex:duel`.
-  Detection only — it never invokes Codex on its own. `codex-rescue` itself
+  Successful commands are not observed, and detection never invokes Codex on its own. `codex-rescue` itself
   hands off only on finite triggers (a repeated-failure streak, an
   un-understood subsystem after search, a high-risk design decision, or an
   explicit second-opinion request), never on a vague feeling of being stuck.
+
+After a blocking Stop review continues the turn, the hook observes
+`stop_hook_active=true`, reports only any still-running Codex task, and allows
+the next Stop without paying for or looping through a second review.
 
 ## Commands
 

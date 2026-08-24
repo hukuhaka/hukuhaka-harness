@@ -24,7 +24,7 @@ function defaultState() {
       // When the gate is on, blocking=true BLOCKs the stop on a finding;
       // blocking=false runs the review but only reports (never blocks).
       reviewGateBlocking: true,
-      // Opt-in: nudge toward a Codex second opinion after a Bash failure streak.
+      // Opt-in: nudge after three Bash failures within five minutes.
       stuckDetector: false
     },
     jobs: []

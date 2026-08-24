@@ -262,7 +262,7 @@ async function handleSetup(argv) {
 
   if (options["enable-stuck-detector"]) {
     setConfig(workspaceRoot, "stuckDetector", true);
-    actionsTaken.push(`Enabled the Codex stuck-detector (nudges after a Bash failure streak) for ${workspaceRoot}.`);
+    actionsTaken.push(`Enabled the Codex stuck-detector (nudges after three Bash failures within five minutes) for ${workspaceRoot}.`);
   } else if (options["disable-stuck-detector"]) {
     setConfig(workspaceRoot, "stuckDetector", false);
     actionsTaken.push(`Disabled the Codex stuck-detector for ${workspaceRoot}.`);

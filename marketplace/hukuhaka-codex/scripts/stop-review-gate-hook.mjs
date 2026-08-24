@@ -185,6 +185,14 @@ function main() {
     ? `Codex task ${runningJob.id} is still running. Check /hukuhaka-codex:status and use /hukuhaka-codex:cancel ${runningJob.id} if you want to stop it before ending the session.`
     : null;
 
+  // A prior Stop hook already continued this turn. Running the review again
+  // can never resolve by itself and may create an expensive continuation loop.
+  // Surface only any still-running task and allow Claude to stop.
+  if (input.stop_hook_active === true) {
+    logNote(runningTaskNote);
+    return;
+  }
+
   if (!config.stopReviewGate) {
     logNote(runningTaskNote);
     return;

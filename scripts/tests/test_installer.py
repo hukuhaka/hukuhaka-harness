@@ -734,7 +734,7 @@ class InstallerSelectionTests(unittest.TestCase):
             summary["hukuhaka-worklog"],
         )
         self.assertEqual(
-            "unknown → 0.4.0",
+            "unknown → 0.4.1",
             summary["hukuhaka-codex"],
         )
         self.assertNotIn("claude-md", summary)
