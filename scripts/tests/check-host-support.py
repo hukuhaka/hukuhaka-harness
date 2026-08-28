@@ -276,6 +276,16 @@ def main() -> int:
             require(rule in template, f"{name} template lacks required guidance: {rule}", errors)
         require("engineering-plan" not in template, f"{name} template names the optional Skill", errors)
 
+    agents_challenge_rules = (
+        "## Handle User Challenges",
+        "not as proof that the prior answer was wrong",
+        "Do not open with generic agreement",
+        "Do not manufacture disagreement merely to appear critical",
+    )
+    for rule in agents_challenge_rules:
+        require(rule in agents_template,
+                f"AGENTS.md template lacks user-challenge guidance: {rule}", errors)
+
     attribution_rule = "No Co-authored-by or co-worker attributions in commit messages."
     require("Do not change `spec.md` contracts without explicit sign-off." in claude_template,
             "CLAUDE.md template lacks the spec contract boundary", errors)

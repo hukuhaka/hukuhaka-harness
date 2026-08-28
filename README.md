@@ -19,7 +19,7 @@ imply that a Claude Code plugin is portable to Codex.
 | **hukuhaka-worklog** | `0.3.0` | Supported | Claude Code, Codex | Reads current work at the first non-trivial project task, tracks lifecycle changes from natural requests, records completed or closed outcomes, and runs setup, status, and archive before model invocation. |
 | **hukuhaka-codex** | `0.4.1` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
 | **CLAUDE.md template** | — | Supported | Claude Code only | Shared scoped-change and verification policy with Claude-specific `spec.md` sign-off and attribution-free commits, deployed to `~/.claude/CLAUDE.md`. |
-| **AGENTS.md template** | — | Supported | Codex only | Codex policy for scoped change previews, evidence-backed verification, compact-resilient task state, and a safe local Git lifecycle, merged into `$CODEX_HOME/AGENTS.md`. |
+| **AGENTS.md template** | — | Supported | Codex only | Codex policy for grounded responses to user challenges, scoped change previews, evidence-backed verification, compact-resilient task state, and a safe local Git lifecycle, merged into `$CODEX_HOME/AGENTS.md`. |
 | **Evidence Scout** | — | Supported | Codex only | Installs a Luna max, read-only custom agent plus compact routing guidance for dynamic parallel repository exploration while the primary retains decisions, writes, and final verification. |
 
 ## Install
@@ -80,7 +80,7 @@ remain unversioned.
 
 Codex also offers an opt-in `Configure global Codex defaults` choice. It is
 unchecked by default. Selecting Evidence Scout applies only its required
-multi-agent enablement and concurrency ceiling; it does not change the primary
+multi-agent enablement; it does not change agent concurrency, nesting, the primary
 model, model catalog, or unrelated agent defaults. Reset and uninstall preserve
 those runtime settings, memory, and unrelated Claude settings. Updating a
 schema-v2 Evidence Scout install removes only its manifest-owned obsolete Luna
@@ -126,11 +126,11 @@ Codex has the same component lifecycle:
 
 `--recommended` includes Evidence Scout. The same install creates
 `$CODEX_HOME/agents/evidence-scout.toml`, merges a separately owned routing
-block into `$CODEX_HOME/AGENTS.md`, enables multi-agent execution, and sets the
-simultaneous concurrency ceiling to four. It leaves `models_cache.json`
+block into `$CODEX_HOME/AGENTS.md`, and enables multi-agent execution. It leaves
+agent concurrency and nesting under user control and leaves `models_cache.json`
 untouched and relies on Codex's native Luna subagent support; it does not create
-or select a model catalog. The ceiling is capacity, not a fixed number of scouts: Codex
-uses one scout per genuinely independent read-only scope and may use fewer. An
+or select a model catalog. Codex uses one scout per genuinely independent
+read-only scope and may use fewer than the configured capacity. An
 existing byte-identical personal scout is adopted; a conflicting unmanaged
 agent file is preserved unless `--force` is explicit. User-owned model-catalog
 pointers are always left unchanged.
@@ -193,10 +193,29 @@ atomic replacement, `codex doctor --json` must report `config.load` as `ok` or
 the original file is restored. See the
 [Codex configuration reference](https://developers.openai.com/codex/config-reference/).
 Evidence Scout installation reuses the same parser, preservation rules, and
-`codex doctor` validation for its three required runtime keys; users do not
-need to run `codex configure` separately. Existing `agents.max_threads` values
-are migrated to `agents.max_concurrent_threads_per_session` before validation;
-configs that already contain both aliases are rejected as ambiguous.
+`codex doctor` validation for its two multi-agent enablement keys; users do not
+need to run `codex configure` separately.
+
+### Codex agent execution policy
+
+```bash
+./scripts/install.sh codex agents
+./scripts/install.sh codex agents set --max-concurrent 8 --max-depth 1 --yes
+./scripts/install.sh codex agents reset --yes
+```
+
+Agent capacity is independent from component installation and global defaults.
+The interactive installer exposes **Configure agent concurrency & nesting**
+under Settings and shows whether the current values are Codex defaults,
+Hukuhaka-managed, user-managed, or drifted. A set operation owns only
+`agents.max_concurrent_threads_per_session` and `agents.max_depth` through
+`.hukuhaka-agent-policy.json`; reset removes only those recorded overrides.
+Existing unmanaged values and managed drift fail closed without mutation.
+Older Evidence Scout installs that still carry their exact managed ceiling of
+four are adopted when their manifest proves the source. The legacy
+`agents.max_threads` spelling is normalized during that migration. Codex CLI
+currently treats `max_depth` as V1-only and ignores it under V2, so every
+interactive and non-interactive set flow displays that warning.
 
 ## Report planner workflow
 

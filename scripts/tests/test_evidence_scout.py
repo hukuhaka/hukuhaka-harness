@@ -127,7 +127,7 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
         self.assertFalse((self.codex_home / "models_cache.json").exists())
         self.assertFalse((self.codex_home / "models-luna-v2.json").exists())
 
-    def test_install_migrates_legacy_agent_limit(self) -> None:
+    def test_install_preserves_user_agent_limit(self) -> None:
         config = self.codex_home / "config.toml"
         original = (
             "[agents]\n"
@@ -140,11 +140,8 @@ class EvidenceScoutDeploymentTests(unittest.TestCase):
             self.deployment().deploy()
 
         migrated = config.read_text(encoding="utf-8")
-        self.assertIn(
-            "max_concurrent_threads_per_session = 4 # legacy alias\n",
-            migrated,
-        )
-        self.assertNotIn("\nmax_threads =", migrated)
+        self.assertIn("max_threads = 9 # legacy alias\n", migrated)
+        self.assertNotIn("max_concurrent_threads_per_session", migrated)
         self.assertIn('default_subagent_model = "user-model"\n', migrated)
         self.assertEqual(
             original.encode(),

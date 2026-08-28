@@ -10,8 +10,10 @@ from pathlib import Path
 from unittest import mock
 
 from scripts.install.codex_config import (
+    AGENT_POLICY_KEYS,
     CONTEXT_POLICY_KEYS,
     RECOMMENDED_SETTINGS,
+    CodexAgentPolicy,
     CodexContextPolicy,
     CodexConfigEditor,
     ContextPolicyState,
@@ -23,6 +25,12 @@ from scripts.install.codex_config import (
 from scripts.install.common import InstallerError, StateError
 
 
+AGENT_SETTINGS = {
+    ("agents", "max_concurrent_threads_per_session"): "8",
+    ("agents", "max_depth"): "1",
+}
+
+
 class CodexConfigTextTests(unittest.TestCase):
     def test_recommended_settings_are_idempotent(self) -> None:
         first = update_config("", RECOMMENDED_SETTINGS)
@@ -31,6 +39,8 @@ class CodexConfigTextTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(RECOMMENDED_SETTINGS, current_values(first))
         self.assertNotIn("\nmodel =", first)
+        self.assertNotIn("max_concurrent_threads_per_session", first)
+        self.assertNotIn("max_depth", first)
 
     def test_unmanaged_text_comments_and_tables_are_preserved(self) -> None:
         original = (
@@ -80,7 +90,7 @@ class CodexConfigTextTests(unittest.TestCase):
 
         updated = update_config(original, RECOMMENDED_SETTINGS)
 
-        self.assertIn("agents.max_concurrent_threads_per_session = 4", updated)
+        self.assertNotIn("max_concurrent_threads_per_session", updated)
         self.assertIn("tui.status_line =", updated)
         self.assertNotIn("\n[agents]\n", updated)
         self.assertNotIn("\n[tui]\n", updated)
@@ -94,30 +104,53 @@ class CodexConfigTextTests(unittest.TestCase):
         )
         self.assertEqual(
             "7",
-            current_values(original)[
+            current_values(
+                original, managed_keys=AGENT_POLICY_KEYS, stage="agents"
+            )[
                 ("agents", "max_concurrent_threads_per_session")
             ],
         )
 
-        updated = update_config(original, RECOMMENDED_SETTINGS)
+        updated = update_config(
+            original,
+            AGENT_SETTINGS,
+            managed_keys=AGENT_POLICY_KEYS,
+            stage="agents",
+        )
 
         self.assertIn(
-            "max_concurrent_threads_per_session = 4 # legacy limit\n",
+            "max_concurrent_threads_per_session = 8 # legacy limit\n",
             updated,
         )
         self.assertNotIn("\nmax_threads =", updated)
         self.assertIn('default_subagent_model = "user-model"\n', updated)
-        self.assertEqual(RECOMMENDED_SETTINGS, current_values(updated))
-        self.assertEqual(updated, update_config(updated, RECOMMENDED_SETTINGS))
+        self.assertEqual(
+            AGENT_SETTINGS,
+            current_values(
+                updated, managed_keys=AGENT_POLICY_KEYS, stage="agents"
+            ),
+        )
+        self.assertEqual(
+            updated,
+            update_config(
+                updated,
+                AGENT_SETTINGS,
+                managed_keys=AGENT_POLICY_KEYS,
+                stage="agents",
+            ),
+        )
 
     def test_dotted_legacy_agent_limit_is_migrated(self) -> None:
         updated = update_config(
             "agents.max_threads = 2\n",
-            {("agents", "max_concurrent_threads_per_session"): "4"},
+            AGENT_SETTINGS,
+            managed_keys=AGENT_POLICY_KEYS,
+            stage="agents",
         )
 
         self.assertEqual(
-            "agents.max_concurrent_threads_per_session = 4\n",
+            "agents.max_concurrent_threads_per_session = 8\n"
+            "agents.max_depth = 1\n\n",
             updated,
         )
 
@@ -131,7 +164,9 @@ class CodexConfigTextTests(unittest.TestCase):
                 "[agents]\n"
                 "max_threads = 4\n"
                 "max_concurrent_threads_per_session = 4\n",
-                RECOMMENDED_SETTINGS,
+                AGENT_SETTINGS,
+                managed_keys=AGENT_POLICY_KEYS,
+                stage="agents",
             )
 
     def test_multiline_managed_array_is_replaced_as_one_value(self) -> None:
@@ -402,6 +437,124 @@ class CodexConfigApplyTests(unittest.TestCase):
             "scripts.install.codex_config.subprocess.run", return_value=completed
         ):
             editor._doctor()
+
+
+class CodexAgentPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory(prefix="hukuhaka agent policy ")
+        self.codex_home = Path(self.temp.name) / ".codex"
+        self.codex_home.mkdir()
+
+    def tearDown(self) -> None:
+        self.temp.cleanup()
+
+    def policy(self, *, dry_run: bool = False) -> CodexAgentPolicy:
+        return CodexAgentPolicy(self.codex_home, dry_run=dry_run)
+
+    def test_set_and_reset_preserve_unrelated_config(self) -> None:
+        config = self.codex_home / "config.toml"
+        config.write_text(
+            'model = "user-model"\n[agents]\ndefault_subagent_model = "user-agent"\n',
+            encoding="utf-8",
+        )
+        policy = self.policy()
+        plan = policy.plan_set(max_concurrent=8, max_depth=1)
+
+        with mock.patch.object(policy.config, "_doctor"):
+            self.assertTrue(policy.apply(plan))
+
+        configured = config.read_text(encoding="utf-8")
+        self.assertIn("max_concurrent_threads_per_session = 8", configured)
+        self.assertIn("max_depth = 1", configured)
+        self.assertIn('model = "user-model"', configured)
+        self.assertIn('default_subagent_model = "user-agent"', configured)
+        self.assertEqual("managed", policy.state().kind)
+        self.assertTrue(policy.manifest_path.is_file())
+
+        reset = policy.plan_reset()
+        with mock.patch.object(policy.config, "_doctor"):
+            self.assertTrue(policy.apply(reset))
+
+        restored = config.read_text(encoding="utf-8")
+        self.assertNotIn("max_concurrent_threads_per_session", restored)
+        self.assertNotIn("max_depth", restored)
+        self.assertIn('model = "user-model"', restored)
+        self.assertIn('default_subagent_model = "user-agent"', restored)
+        self.assertFalse(policy.manifest_path.exists())
+
+    def test_set_adopts_exact_legacy_scout_limit(self) -> None:
+        config = self.codex_home / "config.toml"
+        config.write_text(
+            "[agents]\nmax_threads = 4 # legacy\n",
+            encoding="utf-8",
+        )
+        (self.codex_home / ".hukuhaka-evidence-scout-manifest.json").write_text(
+            '{"schemaVersion": 3, "component": "evidence-scout"}\n',
+            encoding="utf-8",
+        )
+        policy = self.policy()
+        state = policy.state()
+        self.assertEqual("legacy", state.kind)
+        self.assertTrue(state.actionable)
+        plan = policy.plan_set(max_concurrent=8, max_depth=1)
+        with mock.patch.object(policy.config, "_doctor"):
+            policy.apply(plan)
+
+        updated = config.read_text(encoding="utf-8")
+        self.assertNotIn("max_threads", updated)
+        self.assertIn("max_concurrent_threads_per_session = 8 # legacy", updated)
+        self.assertIn("max_depth = 1", updated)
+
+    def test_unmanaged_override_is_preserved(self) -> None:
+        config = self.codex_home / "config.toml"
+        original = "[agents]\nmax_depth = 2\n"
+        config.write_text(original, encoding="utf-8")
+
+        with self.assertRaisesRegex(StateError, "not owned by Hukuhaka"):
+            self.policy().plan_reset()
+
+        self.assertEqual(original, config.read_text(encoding="utf-8"))
+
+    def test_managed_drift_is_rejected(self) -> None:
+        policy = self.policy()
+        plan = policy.plan_set(max_concurrent=8, max_depth=1)
+        with mock.patch.object(policy.config, "_doctor"):
+            policy.apply(plan)
+        config = self.codex_home / "config.toml"
+        config.write_text(
+            config.read_text(encoding="utf-8").replace(
+                "max_concurrent_threads_per_session = 8",
+                "max_concurrent_threads_per_session = 6",
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaisesRegex(StateError, "agent policy drifted"):
+            policy.plan_reset()
+
+    def test_doctor_failure_rolls_back_config_and_manifest(self) -> None:
+        config = self.codex_home / "config.toml"
+        original = b'model = "user-model"\n'
+        config.write_bytes(original)
+        policy = self.policy()
+        plan = policy.plan_set(max_concurrent=8, max_depth=1)
+
+        with mock.patch.object(
+            policy.config,
+            "_doctor",
+            side_effect=InstallerError("doctor rejected agent policy"),
+        ):
+            with self.assertRaisesRegex(InstallerError, "doctor rejected"):
+                policy.apply(plan)
+
+        self.assertEqual(original, config.read_bytes())
+        self.assertFalse(policy.manifest_path.exists())
+
+    def test_limits_must_be_positive(self) -> None:
+        with self.assertRaisesRegex(StateError, "positive integer"):
+            self.policy().plan_set(max_concurrent=0, max_depth=1)
+        with self.assertRaisesRegex(StateError, "positive integer"):
+            self.policy().plan_set(max_concurrent=8, max_depth=0)
 
 
 class ContextPolicyPromptTests(unittest.TestCase):

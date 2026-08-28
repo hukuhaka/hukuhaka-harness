@@ -596,7 +596,7 @@ class CodexEvidenceScoutDeployment:
                         self.routing_target
                     )
                 )
-                print("  [dry-run] enable multi-agent with concurrency ceiling 4")
+                print("  [dry-run] enable multi-agent")
                 if remove_catalog:
                     print(
                         "  [dry-run] remove obsolete Luna v2 model catalog -> {}".format(
@@ -617,7 +617,7 @@ class CodexEvidenceScoutDeployment:
         print("  [ok] evidence-scout routing -> {}".format(self.routing_target))
         if remove_catalog:
             print("  [ok] removed obsolete Luna v2 model catalog")
-        print("  [ok] multi-agent enabled; concurrency ceiling 4")
+        print("  [ok] multi-agent enabled")
 
     def _plan_uninstall(self) -> Optional[Tuple[bytes, bool, ConfigPlan]]:
         manifest = self._manifest()

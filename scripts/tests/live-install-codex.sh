@@ -174,7 +174,7 @@ if [ -z "$SOURCE_DIR" ]; then
 fi
 grep -Eq "  Codex: +success" <<<"$first_output"
 grep -Eq "  Codex: +success" <<<"$second_output"
-grep -Fq "concurrency ceiling 4" <<<"$second_output"
+grep -Fq "multi-agent enabled" <<<"$second_output"
 
 python3 - "$CODEX_HOME" "$SMOKE_ROOT/source-models-cache.json" "$EXPECTED_VERSION" <<'PY'
 import json
@@ -213,18 +213,15 @@ if routing_text.count("<!-- hukuhaka-evidence-scout:begin -->") != 1 or routing_
     raise SystemExit("Evidence Scout routing marker count differs")
 
 config = config_path.read_text(encoding="utf-8")
-for expected_line in (
-    "multi_agent = true",
-    "max_concurrent_threads_per_session = 4",
-):
+for expected_line in ("multi_agent = true",):
     if expected_line not in config:
         raise SystemExit("missing config setting: {}".format(expected_line))
 if "model_catalog_json" in config:
     raise SystemExit("obsolete model_catalog_json pointer was installed")
-if re.search(r"(?m)^\s*(?:agents\.)?max_threads\s*=", config):
-    raise SystemExit("legacy agents.max_threads was not migrated")
-if config.count("max_concurrent_threads_per_session = 4") != 1:
-    raise SystemExit("canonical concurrency setting is not present exactly once")
+if "max_threads = 4 # legacy alias" not in config:
+    raise SystemExit("user-owned legacy agent limit was not preserved")
+if "max_concurrent_threads_per_session" in config or "max_depth" in config:
+    raise SystemExit("component install unexpectedly wrote agent execution policy")
 if 'default_subagent_model = "user-model"' not in config:
     raise SystemExit("unmanaged agent default was not preserved")
 

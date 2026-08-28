@@ -247,7 +247,7 @@ fi
         self.assertIn("plugin add hukuhaka-report-planner@hukuhaka-harness", dry_run.stdout)
         self.assertIn("plugin add hukuhaka-worklog@hukuhaka-harness", dry_run.stdout)
         self.assertIn("install evidence-scout", dry_run.stdout)
-        self.assertIn("concurrency ceiling 4", dry_run.stdout)
+        self.assertIn("enable multi-agent", dry_run.stdout)
         self.assertFalse((state / "marketplace").exists())
         self.assertEqual("", (state / "plugins").read_text(encoding="utf-8"))
 
@@ -282,7 +282,8 @@ fi
         )
         config = (codex_home / "config.toml").read_text(encoding="utf-8")
         self.assertIn("multi_agent = true", config)
-        self.assertIn("max_concurrent_threads_per_session = 4", config)
+        self.assertNotIn("max_concurrent_threads_per_session", config)
+        self.assertNotIn("max_depth", config)
         self.assertNotIn("model_catalog_json", config)
 
         reduced = self._run(
@@ -392,7 +393,89 @@ fi
         self.assertIn("not owned by Hukuhaka", result.stderr)
         self.assertEqual(original, config_path.read_text(encoding="utf-8"))
 
-    def test_fake_codex_migrates_legacy_agent_limit_before_doctor(self) -> None:
+    def test_fake_codex_agent_policy_is_scoped_and_reversible(self) -> None:
+        state, codex_home = self._install_fake_codex()
+        config_path = codex_home / "config.toml"
+        config_path.write_text('model = "user-model"\n', encoding="utf-8")
+        environment = self._environment(
+            CODEX_HOME=str(codex_home),
+            FAKE_CODEX_STATE=str(state),
+            FAKE_SOURCE_ROOT=str(ROOT),
+        )
+
+        set_policy = self._run(
+            (
+                "codex",
+                "agents",
+                "set",
+                "--max-concurrent",
+                "8",
+                "--max-depth",
+                "1",
+                "--yes",
+            ),
+            environment=environment,
+        )
+
+        self.assertEqual(0, set_policy.returncode, set_policy.stderr)
+        configured = config_path.read_text(encoding="utf-8")
+        self.assertIn("max_concurrent_threads_per_session = 8", configured)
+        self.assertIn("max_depth = 1", configured)
+        self.assertIn('model = "user-model"', configured)
+        self.assertTrue((codex_home / ".hukuhaka-agent-policy.json").is_file())
+        self.assertIn("max_depth is V1-only", set_policy.stdout)
+
+        install = self._run(
+            ("codex", "install", "--recommended", "--yes"),
+            environment=environment,
+        )
+        self.assertEqual(0, install.returncode, install.stderr)
+        after_install = config_path.read_text(encoding="utf-8")
+        self.assertIn("max_concurrent_threads_per_session = 8", after_install)
+        self.assertIn("max_depth = 1", after_install)
+
+        reset_policy = self._run(
+            ("codex", "agents", "reset", "--yes"),
+            environment=environment,
+        )
+
+        self.assertEqual(0, reset_policy.returncode, reset_policy.stderr)
+        reset = config_path.read_text(encoding="utf-8")
+        self.assertNotIn("max_concurrent_threads_per_session", reset)
+        self.assertNotIn("max_depth", reset)
+        self.assertIn('model = "user-model"', reset)
+        self.assertFalse((codex_home / ".hukuhaka-agent-policy.json").exists())
+
+    def test_fake_codex_agent_policy_refuses_unmanaged_override(self) -> None:
+        state, codex_home = self._install_fake_codex()
+        config_path = codex_home / "config.toml"
+        original = "[agents]\nmax_depth = 2\n"
+        config_path.write_text(original, encoding="utf-8")
+        environment = self._environment(
+            CODEX_HOME=str(codex_home),
+            FAKE_CODEX_STATE=str(state),
+            FAKE_SOURCE_ROOT=str(ROOT),
+        )
+
+        result = self._run(
+            (
+                "codex",
+                "agents",
+                "set",
+                "--max-concurrent",
+                "8",
+                "--max-depth",
+                "1",
+                "--yes",
+            ),
+            environment=environment,
+        )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("not owned by Hukuhaka", result.stderr)
+        self.assertEqual(original, config_path.read_text(encoding="utf-8"))
+
+    def test_fake_codex_install_preserves_legacy_agent_limit(self) -> None:
         state, codex_home = self._install_fake_codex()
         config_path = codex_home / "config.toml"
         original = (
@@ -415,13 +498,33 @@ fi
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertRegex(result.stdout, r"  Codex: +success")
         config = config_path.read_text(encoding="utf-8")
-        self.assertNotRegex(config, r"(?m)^\s*(?:agents\.)?max_threads\s*=")
-        self.assertEqual(1, config.count("max_concurrent_threads_per_session = 4"))
+        self.assertIn("max_threads = 4 # legacy alias", config)
+        self.assertNotIn("max_concurrent_threads_per_session", config)
+        self.assertNotIn("max_depth", config)
         self.assertIn('default_subagent_model = "user-model"', config)
         self.assertEqual(
             original.encode(),
             (codex_home / "config.toml.hukuhaka-backup").read_bytes(),
         )
+
+        adopted = self._run(
+            (
+                "codex",
+                "agents",
+                "set",
+                "--max-concurrent",
+                "8",
+                "--max-depth",
+                "1",
+                "--yes",
+            ),
+            environment=environment,
+        )
+        self.assertEqual(0, adopted.returncode, adopted.stderr)
+        migrated = config_path.read_text(encoding="utf-8")
+        self.assertNotIn("max_threads", migrated)
+        self.assertIn("max_concurrent_threads_per_session = 8", migrated)
+        self.assertIn("max_depth = 1", migrated)
 
     def test_codex_live_install_smoke_with_local_source(self) -> None:
         result = subprocess.run(
@@ -470,8 +573,9 @@ fi
         self.assertEqual(0, first_remove.returncode, first_remove.stderr)
         self.assertEqual(0, second_remove.returncode, second_remove.stderr)
         config = (codex_home / "config.toml").read_text(encoding="utf-8")
-        self.assertNotRegex(config, r"(?m)^\s*(?:agents\.)?max_threads\s*=")
-        self.assertEqual(1, config.count("max_concurrent_threads_per_session = 4"))
+        self.assertIn("max_threads = 4 # legacy alias", config)
+        self.assertNotIn("max_concurrent_threads_per_session", config)
+        self.assertNotIn("max_depth", config)
         self.assertIn('default_subagent_model = "user-model"', config)
 
 

@@ -202,7 +202,9 @@ class CodexLifecycleTests(unittest.TestCase):
         ]
         self.assertTrue(remove_indices)
         self.assertLess(add_index, min(remove_indices))
-        self.assertTrue((self.codex_home / "AGENTS.md").is_file())
+        agents_path = self.codex_home / "AGENTS.md"
+        self.assertTrue(agents_path.is_file())
+        self.assertIn("## Handle User Challenges", agents_path.read_text())
 
     def test_remote_marketplace_is_pinned_to_the_resolved_release(self) -> None:
         with mock.patch("scripts.install.codex.git_commit", return_value="target"):

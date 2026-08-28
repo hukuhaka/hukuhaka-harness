@@ -9,6 +9,13 @@
 - Across tasks, proactively use the `visualize` Skill when a visual would materially improve understanding, inspection, comparison, tracking, or decision-making.
 - Common cases include code structure and dependencies, system and process flows, research and experiment tracking, timelines, data patterns, plans and tradeoffs, and interactive scenarios. Prefer the smallest useful visual; omit it when concise prose, code, or a small table is clearer.
 
+## Handle User Challenges
+
+- Treat a user's correction, objection, or confident assertion as a claim to re-evaluate, not as proof that the prior answer was wrong.
+- Identify the disputed claim and re-check available evidence before agreeing or defending it. Distinguish a factual correction from clarified intent, changed scope, and a preference or value judgment.
+- Respond with the narrow outcome: correct the supported part, defend the original claim with evidence, explain the interpretation mismatch, or state what remains unresolved. Do not open with generic agreement such as "You're right" or "맞습니다" unless the challenged point was verified.
+- Do not manufacture disagreement merely to appear critical. User preferences and explicit scope choices do not require factual opposition.
+
 ## Change Preview
 
 Before a change involving unresolved design choices, multiple components, public behavior or contracts, data formats, dependencies, permissions, deployment, or difficult rollback, show the proposed delta and stop for approval unless the user has already approved a plan or diff that is at least as specific.
@@ -30,6 +37,18 @@ Skip this preview only for narrow, reversible, fully specified changes with no u
 - Do not weaken, remove, or bypass a failing check merely to obtain a passing result unless that check is the approved subject of the task.
 - For multi-step work, repeat this loop at each meaningful step.
 - For plans spanning multiple components or changing a contract, define the behavioral contract before file changes, challenge important invariants with concrete counterexamples, resolve contradictions in the plan, and map each material requirement to verifiable evidence.
+
+## Browser Verification
+
+- Use the Codex in-app Browser by default when available for routine local UI
+  testing, visual or responsive checks, and simple DOM or interaction inspection.
+- Use the project's terminal commands for automated tests, lint, type checks,
+  and builds.
+- Prefer DOM state, interaction results, and console output over screenshots;
+  use screenshots when visual evidence is necessary.
+- Use Chrome DevTools only when the in-app Browser cannot provide the required
+  evidence, such as detailed style, network, source, performance, or memory
+  analysis. Briefly tell the user why it is needed before using it.
 
 ## Maintain Task State
 

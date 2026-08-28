@@ -30,7 +30,6 @@ RECOMMENDED_SETTINGS = {
     ("model_reasoning_summary",): '"concise"',
     ("model_verbosity",): '"low"',
     ("agents", "enabled"): "true",
-    ("agents", "max_concurrent_threads_per_session"): "4",
     ("features", "multi_agent"): "true",
     (
         "tui",
@@ -47,8 +46,16 @@ RECOMMENDED_SETTINGS = {
 EVIDENCE_SCOUT_SETTINGS = {
     ("features", "multi_agent"): "true",
     ("agents", "enabled"): "true",
-    ("agents", "max_concurrent_threads_per_session"): "4",
 }  # type: Dict[Key, str]
+
+# Agent execution capacity is an explicit user policy, separate from component
+# installation and the general Codex defaults wizard. The policy owns only
+# these two settings and records that ownership in its own manifest.
+AGENT_POLICY_KEYS = (
+    ("agents", "max_concurrent_threads_per_session"),
+    ("agents", "max_depth"),
+)
+AGENT_POLICY_MANIFEST = ".hukuhaka-agent-policy.json"
 
 # Legacy Evidence Scout installs owned this top-level key. Keep it in the
 # managed set only so schema-v2 manifests can remove their exact pointer.
@@ -528,13 +535,6 @@ def prompt_settings(current: Mapping[Key, str]) -> Dict[Key, str]:
         "Enable multi-agent",
         current.get(("agents", "enabled"), "true").lower() != "false",
     )
-    raw_threads = current.get(("agents", "max_concurrent_threads_per_session"), "4")
-    while True:
-        entered = input("Concurrent agents [{}]: ".format(raw_threads)).strip() or raw_threads
-        if entered.isdigit() and int(entered) > 0:
-            threads = entered
-            break
-        print("Enter a positive integer.")
     notifications = _prompt_bool(
         "Enable TUI notifications",
         current.get(("tui", "notifications"), "true").lower() != "false",
@@ -549,7 +549,6 @@ def prompt_settings(current: Mapping[Key, str]) -> Dict[Key, str]:
         ("model_reasoning_summary",): json.dumps(summary),
         ("model_verbosity",): json.dumps(verbosity),
         ("agents", "enabled"): str(agents_enabled).lower(),
-        ("agents", "max_concurrent_threads_per_session"): threads,
         ("tui", "status_line"): current.get(
             ("tui", "status_line"), recommended[("tui", "status_line")]
         ),
@@ -562,6 +561,67 @@ def prompt_settings(current: Mapping[Key, str]) -> Dict[Key, str]:
         ),
         ("features", "prevent_idle_sleep"): str(idle_sleep).lower(),
     }
+
+
+def prompt_agent_action(state: "AgentPolicyState") -> Optional[str]:
+    print("Codex agent execution policy")
+    print("  Current configuration: {}".format(state.label))
+    print(
+        "  Concurrent spawned threads: {}".format(
+            state.display(("agents", "max_concurrent_threads_per_session"))
+        )
+    )
+    print(
+        "  V1 nesting depth: {}".format(
+            state.display(("agents", "max_depth"))
+        )
+    )
+    print("  Note: max_depth is V1-only and is ignored by V2.")
+    if not state.actionable:
+        print("  This policy is not managed by Hukuhaka and will not be changed.")
+        print("  q. Exit")
+        while True:
+            choice = input("Choose an action [q]: ").strip().lower() or "q"
+            if choice in ("q", "quit", "exit"):
+                return None
+            print("Choose q.")
+    print("  1. Set custom policy")
+    print("  2. Reset to Codex defaults")
+    print("  q. Exit")
+    while True:
+        choice = input("Choose an action [q]: ").strip().lower() or "q"
+        if choice in ("1", "set"):
+            return "set"
+        if choice in ("2", "reset"):
+            return "reset"
+        if choice in ("q", "quit", "exit"):
+            return None
+        print("Choose 1, 2, or q.")
+
+
+def prompt_agent_settings(state: "AgentPolicyState") -> Tuple[int, int]:
+    print("Set custom agent execution policy")
+    print("  max_depth is V1-only and is ignored by V2.")
+    threads = state.integer(
+        ("agents", "max_concurrent_threads_per_session"), fallback=8
+    )
+    depth = state.integer(("agents", "max_depth"), fallback=1)
+    while True:
+        entered = (
+            input("Concurrent spawned threads [{}]: ".format(threads)).strip()
+            or str(threads)
+        )
+        if entered.isdigit() and int(entered) > 0:
+            threads = int(entered)
+            break
+        print("Enter a positive integer.")
+    while True:
+        entered = input("V1 nesting depth [{}]: ".format(depth)).strip() or str(depth)
+        if entered.isdigit() and int(entered) > 0:
+            depth = int(entered)
+            break
+        print("Enter a positive integer.")
+    return threads, depth
 
 
 def _prompt_positive_integer(label: str) -> int:
@@ -891,6 +951,376 @@ class CodexConfigEditor:
                 path=str(self.path),
             )
         self._doctor()
+
+
+@dataclass(frozen=True)
+class AgentPolicyPlan:
+    action: str
+    settings: Dict[Key, str]
+    config: ConfigPlan
+    manifest_path: Path
+    manifest_original: bytes
+    manifest_proposed: Optional[bytes]
+    manifest_existed: bool
+    manifest_mode: int
+
+    @property
+    def changed(self) -> bool:
+        expected_manifest = (
+            b"" if self.manifest_proposed is None else self.manifest_proposed
+        )
+        return self.config.changed or self.manifest_original != expected_manifest
+
+    def diff(self) -> str:
+        return self.config.diff()
+
+
+@dataclass(frozen=True)
+class AgentPolicyState:
+    """Observed agent execution limits and their ownership state."""
+
+    kind: str
+    settings: Mapping[Key, str]
+
+    @property
+    def label(self) -> str:
+        return {
+            "default": "Codex defaults",
+            "legacy": "legacy Evidence Scout limit",
+            "managed": "custom (Hukuhaka managed)",
+            "unmanaged": "custom (not managed by Hukuhaka)",
+            "drifted": "drifted (Hukuhaka managed)",
+        }[self.kind]
+
+    @property
+    def actionable(self) -> bool:
+        return self.kind in ("default", "legacy", "managed")
+
+    def display(self, key: Key) -> str:
+        value = self.settings.get(key)
+        if value is not None:
+            if self.kind in ("managed", "drifted"):
+                source = "Hukuhaka managed override"
+            elif self.kind == "legacy":
+                source = "legacy Evidence Scout override"
+            else:
+                source = "user override"
+            return "{} ({})".format(value, source)
+        if key == ("agents", "max_depth"):
+            return "Codex V1 default (not exposed)"
+        return "Codex default (no override)"
+
+    def integer(self, key: Key, *, fallback: int) -> int:
+        value = self.settings.get(key, "")
+        return int(value) if value.isdigit() and int(value) > 0 else fallback
+
+
+class CodexAgentPolicy:
+    """Own explicit agent capacity settings without coupling them to install."""
+
+    def __init__(self, codex_home: Path, *, dry_run: bool = False) -> None:
+        self.codex_home = codex_home.expanduser()
+        self.config = CodexConfigEditor(
+            self.codex_home,
+            dry_run=dry_run,
+            managed_keys=AGENT_POLICY_KEYS,
+            stage="agents",
+        )
+        self.manifest_path = self.codex_home / AGENT_POLICY_MANIFEST
+        self.dry_run = dry_run
+
+    def _legacy_scout_limit_owned(self, actual: Mapping[Key, str]) -> bool:
+        """Recognize the exact capacity override written by older scout installs."""
+        if actual != {
+            ("agents", "max_concurrent_threads_per_session"): "4"
+        }:
+            return False
+        manifest = self.codex_home / ".hukuhaka-evidence-scout-manifest.json"
+        if manifest.is_symlink() or not manifest.is_file():
+            return False
+        try:
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return False
+        return (
+            isinstance(payload, dict)
+            and payload.get("component") == "evidence-scout"
+            and payload.get("schemaVersion") in (2, 3)
+        )
+
+    @staticmethod
+    def _key_name(key: Key) -> str:
+        return ".".join(key)
+
+    def _read_manifest(self) -> Tuple[bytes, bool, int]:
+        if not self.manifest_path.exists() and not self.manifest_path.is_symlink():
+            return b"", False, 0o600
+        if self.manifest_path.is_symlink() or not self.manifest_path.is_file():
+            raise StateError(
+                "Codex agent policy manifest must be a regular file",
+                host="codex",
+                stage="agents",
+                operation="read-manifest",
+                path=str(self.manifest_path),
+            )
+        return (
+            self.manifest_path.read_bytes(),
+            True,
+            stat.S_IMODE(self.manifest_path.stat().st_mode),
+        )
+
+    @staticmethod
+    def _positive_integer(value: str, *, label: str) -> int:
+        if not value.isdigit() or int(value) <= 0:
+            raise StateError(
+                "{} must be a positive integer".format(label),
+                host="codex",
+                stage="agents",
+                operation="validate-policy",
+            )
+        return int(value)
+
+    @classmethod
+    def _validate_settings(cls, settings: Mapping[Key, str]) -> None:
+        if set(settings) != set(AGENT_POLICY_KEYS):
+            raise StateError(
+                "agent policy must set every agent execution override",
+                host="codex",
+                stage="agents",
+                operation="validate-policy",
+            )
+        cls._positive_integer(
+            settings[("agents", "max_concurrent_threads_per_session")],
+            label="concurrent spawned threads",
+        )
+        cls._positive_integer(
+            settings[("agents", "max_depth")],
+            label="V1 nesting depth",
+        )
+
+    def _decode_manifest(self, raw: bytes) -> Dict[Key, str]:
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise StateError(
+                "Codex agent policy manifest must be valid UTF-8 JSON",
+                host="codex",
+                stage="agents",
+                operation="read-manifest",
+                path=str(self.manifest_path),
+            ) from exc
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schemaVersion") != 1
+            or set(payload) != {"schemaVersion", "settings"}
+            or not isinstance(payload.get("settings"), dict)
+        ):
+            raise StateError(
+                "Codex agent policy manifest has an unsupported shape",
+                host="codex",
+                stage="agents",
+                operation="read-manifest",
+                path=str(self.manifest_path),
+            )
+        raw_settings = payload["settings"]
+        expected_names = {self._key_name(key) for key in AGENT_POLICY_KEYS}
+        if set(raw_settings) != expected_names or not all(
+            isinstance(value, str) for value in raw_settings.values()
+        ):
+            raise StateError(
+                "Codex agent policy manifest has invalid settings",
+                host="codex",
+                stage="agents",
+                operation="read-manifest",
+                path=str(self.manifest_path),
+            )
+        settings = {
+            key: raw_settings[self._key_name(key)] for key in AGENT_POLICY_KEYS
+        }
+        self._validate_settings(settings)
+        return settings
+
+    def _manifest_bytes(self, settings: Mapping[Key, str]) -> bytes:
+        payload = {
+            "schemaVersion": 1,
+            "settings": {
+                self._key_name(key): settings[key] for key in AGENT_POLICY_KEYS
+            },
+        }
+        return (json.dumps(payload, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+    def _build_plan(
+        self, action: str, settings: Optional[Mapping[Key, str]] = None
+    ) -> AgentPolicyPlan:
+        manifest_original, manifest_existed, manifest_mode = self._read_manifest()
+        manifest_settings = (
+            self._decode_manifest(manifest_original) if manifest_existed else None
+        )
+        if action == "set":
+            assert settings is not None
+            next_settings = dict(settings)
+            self._validate_settings(next_settings)
+            config_plan = self.config.plan(next_settings)
+            manifest_proposed = self._manifest_bytes(next_settings)
+        elif action == "reset":
+            next_settings = {}  # type: Dict[Key, str]
+            config_plan = self.config.plan(
+                {}, remove=AGENT_POLICY_KEYS if manifest_existed else ()
+            )
+            manifest_proposed = None
+        else:
+            raise StateError(
+                "unsupported Codex agent policy action: {}".format(action),
+                host="codex",
+                stage="agents",
+                operation="plan-policy",
+            )
+
+        actual = current_values(
+            config_plan.original.decode("utf-8"),
+            managed_keys=AGENT_POLICY_KEYS,
+            stage="agents",
+        )
+        legacy_scout_limit = (
+            manifest_settings is None and self._legacy_scout_limit_owned(actual)
+        )
+        if action == "reset" and legacy_scout_limit:
+            config_plan = self.config.plan(
+                {},
+                remove=(("agents", "max_concurrent_threads_per_session"),),
+            )
+        if manifest_settings is None:
+            if actual and not legacy_scout_limit:
+                raise StateError(
+                    "agent execution overrides already exist and are not owned by Hukuhaka; preserving them",
+                    host="codex",
+                    stage="agents",
+                    operation="validate-ownership",
+                    path=str(self.config.path),
+                )
+        elif actual != manifest_settings:
+            raise StateError(
+                "Hukuhaka agent policy drifted; review the agent execution overrides before changing them",
+                host="codex",
+                stage="agents",
+                operation="validate-ownership",
+                path=str(self.config.path),
+            )
+
+        return AgentPolicyPlan(
+            action,
+            next_settings,
+            config_plan,
+            self.manifest_path,
+            manifest_original,
+            manifest_proposed,
+            manifest_existed,
+            manifest_mode,
+        )
+
+    def plan_set(self, *, max_concurrent: int, max_depth: int) -> AgentPolicyPlan:
+        return self._build_plan(
+            "set",
+            {
+                ("agents", "max_concurrent_threads_per_session"): str(
+                    max_concurrent
+                ),
+                ("agents", "max_depth"): str(max_depth),
+            },
+        )
+
+    def plan_reset(self) -> AgentPolicyPlan:
+        return self._build_plan("reset")
+
+    def replan(self, plan: AgentPolicyPlan) -> AgentPolicyPlan:
+        return self._build_plan(plan.action, plan.settings or None)
+
+    def state(self) -> AgentPolicyState:
+        manifest, exists, _ = self._read_manifest()
+        original, _, _ = self.config._read()
+        actual = current_values(
+            original.decode("utf-8"),
+            managed_keys=AGENT_POLICY_KEYS,
+            stage="agents",
+        )
+        if not exists:
+            if not actual:
+                kind = "default"
+            elif self._legacy_scout_limit_owned(actual):
+                kind = "legacy"
+            else:
+                kind = "unmanaged"
+            return AgentPolicyState(kind, actual)
+        expected = self._decode_manifest(manifest)
+        return AgentPolicyState(
+            "managed" if actual == expected else "drifted",
+            actual,
+        )
+
+    def status(self) -> str:
+        return self.state().label
+
+    def apply(self, plan: AgentPolicyPlan) -> bool:
+        if self.dry_run:
+            print("Codex agent policy dry run complete. No files were modified.")
+            return False
+        with installer_state(self.codex_home, dry_run=False) as writable:
+            replanned = self._build_plan(plan.action, plan.settings or None)
+            if replanned != plan:
+                raise StateError(
+                    "Codex agent policy changed after the diff was prepared; review it again",
+                    host="codex",
+                    stage="agents",
+                    operation="verify-precondition",
+                    path=str(self.config.path),
+                )
+            if not plan.changed:
+                print(
+                    "Codex agent policy already uses Codex defaults."
+                    if plan.action == "reset"
+                    else "Codex agent policy already matches the selected values."
+                )
+                return False
+            assert writable
+            with FileTransaction(self.codex_home) as transaction:
+                if plan.config.changed:
+                    if plan.config.existed:
+                        transaction.write_bytes(
+                            self.config.backup,
+                            plan.config.original,
+                            plan.config.mode,
+                        )
+                    transaction.write_bytes(
+                        self.config.path,
+                        plan.config.proposed,
+                        plan.config.mode,
+                    )
+                if plan.manifest_proposed is None:
+                    transaction.remove(plan.manifest_path)
+                else:
+                    transaction.write_bytes(
+                        plan.manifest_path,
+                        plan.manifest_proposed,
+                        plan.manifest_mode,
+                    )
+                self.config._doctor()
+                transaction.commit()
+        print("  [ok] Codex agent policy -> {}".format(self.config.path))
+        return True
+
+    def verify(self, plan: AgentPolicyPlan) -> None:
+        if self.dry_run:
+            return
+        verified = self.replan(plan)
+        if verified.changed:
+            raise StateError(
+                "managed Codex agent policy changed during component installation",
+                host="codex",
+                stage="agents",
+                operation="verify",
+                path=str(self.config.path),
+            )
+        self.config._doctor()
 
 
 @dataclass(frozen=True)

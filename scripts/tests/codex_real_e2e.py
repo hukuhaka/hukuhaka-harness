@@ -192,7 +192,7 @@ def validate_install(source: Path, version: str, root: Path, *, plugins: bool) -
     if any("catalog" in key.lower() for key in manifest):
         raise E2EFailure("schema-v3 manifest still owns a model catalog")
     config_text = config.read_text(encoding="utf-8")
-    for expected in ("multi_agent = true", "max_concurrent_threads_per_session = 4"):
+    for expected in ("multi_agent = true",):
         if expected not in config_text:
             raise E2EFailure("missing runtime setting: {}".format(expected))
     if "model_catalog_json" in config_text:
@@ -273,8 +273,8 @@ def scenario_fresh(source: Path, version: str, root: Path) -> None:
     if (home / ".hukuhaka-evidence-scout-manifest.json").exists():
         raise E2EFailure("uninstall left the Evidence Scout manifest")
     config_text = (home / "config.toml").read_text(encoding="utf-8")
-    if "max_concurrent_threads_per_session = 4" not in config_text:
-        raise E2EFailure("uninstall removed the retained runtime settings")
+    if "max_concurrent_threads_per_session" in config_text or "max_depth" in config_text:
+        raise E2EFailure("component lifecycle wrote agent execution policy")
     install(source, version, root)
     validate_install(source, version, root, plugins=True)
 

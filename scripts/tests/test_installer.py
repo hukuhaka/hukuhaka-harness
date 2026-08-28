@@ -1033,6 +1033,65 @@ class InstallerSelectionTests(unittest.TestCase):
         result = print_results.call_args.args[0][0]
         self.assertEqual("success", result.status)
 
+    def test_interactive_applies_agent_policy_before_components_and_verifies(self) -> None:
+        installer = self.installer()
+        plans = [
+            HostInstallPlan(
+                "codex",
+                ["agents-md"],
+                change_agent_policy=True,
+            )
+        ]
+        agent_plan = mock.Mock(action="set", changed=True)
+        applied_agent_plan = mock.Mock(action="set", changed=True)
+        agent_policy = mock.Mock()
+        agent_policy.state.return_value = mock.Mock(label="Codex defaults")
+        agent_policy.plan_set.return_value = agent_plan
+        agent_policy.replan.return_value = applied_agent_plan
+        events = []
+        agent_policy.apply.side_effect = lambda *args: events.append("agents")
+        agent_policy.verify.side_effect = lambda *args: events.append(
+            "agents-verify"
+        )
+
+        def apply_host(*args, **kwargs):
+            events.append("components")
+            return HostResult("codex", "success")
+
+        with mock.patch.object(installer, "_tty_available", return_value=True), \
+             mock.patch("scripts.install.main.shutil.which", return_value="/fake"), \
+             mock.patch.object(
+                 installer,
+                 "_current_state",
+                 return_value=HostComponentState(set(), {}),
+             ), \
+             mock.patch.object(installer, "_host_version", return_value="test"), \
+             mock.patch("scripts.install.main.prompt_install_plan", return_value=plans), \
+             mock.patch("scripts.install.main.prompt_agent_action", return_value="set"), \
+             mock.patch(
+                 "scripts.install.main.prompt_agent_settings",
+                 return_value=(8, 1),
+             ), \
+             mock.patch(
+                 "scripts.install.main.CodexAgentPolicy",
+                 return_value=agent_policy,
+             ), \
+             mock.patch.object(installer, "_confirm", return_value=True), \
+             mock.patch.object(installer, "_apply_host", side_effect=apply_host), \
+             mock.patch.object(installer, "_print_results", return_value=0) as print_results:
+            self.assertEqual(0, installer.interactive())
+
+        self.assertEqual(["agents", "components", "agents-verify"], events)
+        agent_policy.plan_set.assert_called_once_with(
+            max_concurrent=8,
+            max_depth=1,
+        )
+        agent_policy.replan.assert_called_once_with(agent_plan)
+        agent_policy.apply.assert_called_once_with(applied_agent_plan)
+        agent_policy.verify.assert_called_once_with(applied_agent_plan)
+        result = print_results.call_args.args[0][0]
+        self.assertEqual("success", result.status)
+
     def test_interactive_replans_context_after_global_config_update(self) -> None:
         installer = self.installer()
         plans = [
@@ -1245,6 +1304,7 @@ class InstallerSelectionTests(unittest.TestCase):
                 {"codex": {}},
                 config_plan,
                 context_plan,
+                None,
             )
 
         rendered = output.getvalue()
@@ -1552,6 +1612,7 @@ class PlainTerminalSelectionTests(unittest.TestCase):
                 "down",
                 "down",
                 "down",
+                "down",
                 "enter",
             ),
         )
@@ -1595,6 +1656,7 @@ class PlainTerminalSelectionTests(unittest.TestCase):
                 "down",
                 "down",
                 "down",
+                "down",
                 "enter",
             ),
         )
@@ -1603,6 +1665,49 @@ class PlainTerminalSelectionTests(unittest.TestCase):
         self.assertTrue(plans[0].change_context_window)
         self.assertIn(
             "Configure context & auto-compaction (Codex/model defaults)",
+            output.getvalue(),
+        )
+
+    def test_codex_agent_policy_is_opt_in_and_shows_its_status(self) -> None:
+        output = io.StringIO()
+        plans = prompt_install_plan(
+            io.StringIO(),
+            output,
+            sections=[
+                {
+                    "host": "codex",
+                    "label": "Codex",
+                    "version": "0.149.1",
+                    "components": [
+                        {
+                            "name": "hukuhaka-report-planner",
+                            "kind": "plugin",
+                            "default": True,
+                            "lifecycle": "supported",
+                        }
+                    ],
+                    "selected": {"hukuhaka-report-planner"},
+                    "agent_policy_status": "Codex defaults",
+                }
+            ],
+            keys=(
+                "down",
+                "down",
+                "down",
+                "down",
+                "down",
+                "toggle",
+                "down",
+                "down",
+                "down",
+                "enter",
+            ),
+        )
+
+        self.assertEqual(1, len(plans))
+        self.assertTrue(plans[0].change_agent_policy)
+        self.assertIn(
+            "Configure agent concurrency & nesting (Codex defaults)",
             output.getvalue(),
         )
 

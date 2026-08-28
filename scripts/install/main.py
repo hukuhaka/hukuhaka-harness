@@ -15,10 +15,14 @@ from .codex import CodexInstaller
 from .codex_config import (
     CONTEXT_POLICY_SCOPES,
     RECOMMENDED_SETTINGS,
+    AgentPolicyPlan,
+    CodexAgentPolicy,
     CodexContextPolicy,
     CodexConfigEditor,
     ConfigPlan,
     ContextPolicyPlan,
+    prompt_agent_action,
+    prompt_agent_settings,
     prompt_context_action,
     prompt_context_settings,
     prompt_settings,
@@ -276,6 +280,7 @@ class Installer:
         installed_versions: Mapping[str, Mapping[str, str]],
         config_plan: Optional[ConfigPlan],
         context_plan: Optional[ContextPolicyPlan],
+        agent_plan: Optional[AgentPolicyPlan],
     ) -> None:
         print("Installation plan")
         print("")
@@ -309,7 +314,7 @@ class Installer:
                 )
             )
             if plan.host == "codex" and "evidence-scout" in desired:
-                print("    Agent runtime:  multi-agent enabled; concurrency ceiling 4")
+                print("    Agent runtime:  multi-agent enabled")
             if plan.configure_codex:
                 print("  Settings")
                 print("    Global defaults: update")
@@ -323,6 +328,16 @@ class Installer:
                     else "reset to Codex defaults"
                 )
                 print("    Context window: {}".format(action))
+            if plan.change_agent_policy:
+                assert agent_plan is not None
+                if not plan.configure_codex and not plan.change_context_window:
+                    print("  Settings")
+                action = (
+                    "set custom policy"
+                    if agent_plan.action == "set"
+                    else "reset to Codex defaults"
+                )
+                print("    Agent execution: {}".format(action))
             print("  Reset")
             print(
                 "    Managed components: {}".format(
@@ -332,7 +347,7 @@ class Installer:
             if plan.include_template:
                 print("    Instruction template: yes")
             print("")
-        if config_plan is not None or context_plan is not None:
+        if config_plan is not None or context_plan is not None or agent_plan is not None:
             print("Settings changes")
         if config_plan is not None:
             print("Global Codex defaults")
@@ -349,6 +364,15 @@ class Installer:
                 print("Codex context policy already uses Codex defaults.")
             else:
                 print("Codex context policy already matches the selected values.")
+            print("")
+        if agent_plan is not None:
+            print("Agent execution")
+            if agent_plan.changed:
+                print(agent_plan.diff(), end="")
+            elif agent_plan.action == "reset":
+                print("Codex agent policy already uses Codex defaults.")
+            else:
+                print("Codex agent policy already matches the selected values.")
             print("")
 
     def _confirm(self) -> bool:
@@ -402,12 +426,16 @@ class Installer:
         context_changed: bool = False,
         context_applied: bool = False,
         context_errors: Sequence[str] = (),
+        agent_requested: bool = False,
+        agent_changed: bool = False,
+        agent_applied: bool = False,
+        agent_errors: Sequence[str] = (),
     ) -> HostResult:
-        settings_requested = config_requested or context_requested
+        settings_requested = config_requested or context_requested or agent_requested
         if not settings_requested:
             return component_result
 
-        setting_errors = list(config_errors) + list(context_errors)
+        setting_errors = list(config_errors) + list(context_errors) + list(agent_errors)
         details = list(setting_errors)
         if component_result.detail:
             details.append(component_result.detail)
@@ -416,12 +444,14 @@ class Installer:
             status = (
                 "failed"
                 if component_result.status == "failed"
-                and not (config_applied or context_applied)
+                and not (config_applied or context_applied or agent_applied)
                 else "partial"
             )
         elif component_result.status in ("failed", "partial"):
             status = "partial"
-        elif component_result.status == "noop" and (config_changed or context_changed):
+        elif component_result.status == "noop" and (
+            config_changed or context_changed or agent_changed
+        ):
             status = "success"
         else:
             status = component_result.status
@@ -490,6 +520,10 @@ class Installer:
                     self._codex().codex_home,
                     dry_run=bool(getattr(self.args, "dry_run", False)),
                 ).state().label
+                section["agent_policy_status"] = CodexAgentPolicy(
+                    self._codex().codex_home,
+                    dry_run=bool(getattr(self.args, "dry_run", False)),
+                ).state().label
             sections.append(section)
 
         plans = prompt_install_plan(sys.stdin, sys.stdout, sections=sections)
@@ -530,12 +564,35 @@ class Installer:
             else:
                 context_plan = context_policy.plan_reset()
 
+        agent_policy = None  # type: Optional[CodexAgentPolicy]
+        agent_plan = None  # type: Optional[AgentPolicyPlan]
+        if any(plan.change_agent_policy for plan in plans):
+            agent_policy = CodexAgentPolicy(
+                self._codex().codex_home,
+                dry_run=bool(getattr(self.args, "dry_run", False)),
+            )
+            agent_action = prompt_agent_action(agent_policy.state())
+            if agent_action is None:
+                print("Exit. No changes were made.")
+                return 0
+            if agent_action == "set":
+                max_concurrent, max_depth = prompt_agent_settings(
+                    agent_policy.state()
+                )
+                agent_plan = agent_policy.plan_set(
+                    max_concurrent=max_concurrent,
+                    max_depth=max_depth,
+                )
+            else:
+                agent_plan = agent_policy.plan_reset()
+
         self._print_plan(
             plans,
             current,
             installed_versions,
             config_plan,
             context_plan,
+            agent_plan,
         )
         if not self._confirm():
             print("Exit. No changes were made.")
@@ -550,6 +607,10 @@ class Installer:
             context_ready = False
             context_applied = False
             applied_context_plan = None  # type: Optional[ContextPolicyPlan]
+            agent_errors = []  # type: List[str]
+            agent_ready = False
+            agent_applied = False
+            applied_agent_plan = None  # type: Optional[AgentPolicyPlan]
             if plan.host == "codex" and plan.configure_codex:
                 assert config_editor is not None and config_plan is not None
                 try:
@@ -571,6 +632,15 @@ class Installer:
                     context_ready = True
                 except InstallerError as exc:
                     context_errors.append(exc.render())
+
+            if plan.host == "codex" and plan.change_agent_policy:
+                assert agent_policy is not None and agent_plan is not None
+                try:
+                    applied_agent_plan = agent_policy.replan(agent_plan)
+                    agent_applied = bool(agent_policy.apply(applied_agent_plan))
+                    agent_ready = True
+                except InstallerError as exc:
+                    agent_errors.append(exc.render())
 
             result = self._apply_host(plan, current.get(plan.host))
 
@@ -598,6 +668,18 @@ class Installer:
                 except InstallerError as exc:
                     context_errors.append(exc.render())
 
+            if (
+                plan.host == "codex"
+                and plan.change_agent_policy
+                and agent_ready
+                and agent_policy is not None
+                and applied_agent_plan is not None
+            ):
+                try:
+                    agent_policy.verify(applied_agent_plan)
+                except InstallerError as exc:
+                    agent_errors.append(exc.render())
+
             result = self._combine_codex_result(
                 result,
                 config_requested=plan.host == "codex" and plan.configure_codex,
@@ -614,6 +696,14 @@ class Installer:
                 ),
                 context_applied=context_applied,
                 context_errors=context_errors,
+                agent_requested=(
+                    plan.host == "codex" and plan.change_agent_policy
+                ),
+                agent_changed=bool(
+                    agent_plan is not None and agent_plan.changed
+                ),
+                agent_applied=agent_applied,
+                agent_errors=agent_errors,
             )
             results.append(result)
         return self._print_results(
@@ -676,6 +766,54 @@ class Installer:
         policy.apply(plan)
         return 0
 
+    def _agent_policy(self) -> int:
+        policy = CodexAgentPolicy(
+            self._codex().codex_home,
+            dry_run=bool(getattr(self.args, "dry_run", False)),
+        )
+        action = self.args.agent_action
+        if action is None:
+            if not self._tty_available():
+                print(
+                    "installer: codex agents requires a terminal or an explicit "
+                    "set/reset action",
+                    file=sys.stderr,
+                )
+                return 2
+            action = prompt_agent_action(policy.state())
+            if action is None:
+                print("Exit. No changes were made.")
+                return 0
+            if action == "set":
+                max_concurrent, max_depth = prompt_agent_settings(policy.state())
+                plan = policy.plan_set(
+                    max_concurrent=max_concurrent,
+                    max_depth=max_depth,
+                )
+            else:
+                plan = policy.plan_reset()
+        elif action == "set":
+            plan = policy.plan_set(
+                max_concurrent=self.args.max_concurrent,
+                max_depth=self.args.max_depth,
+            )
+        else:
+            plan = policy.plan_reset()
+
+        print("Codex agent execution policy")
+        print("Note: max_depth is V1-only and is ignored by V2.")
+        if plan.changed:
+            print(plan.diff(), end="")
+        elif action == "reset":
+            print("Codex agent policy already uses Codex defaults.")
+        else:
+            print("Codex agent policy already matches the selected values.")
+        if not self._confirm():
+            print("Exit. No changes were made.")
+            return 0
+        policy.apply(plan)
+        return 0
+
     def automation(self) -> int:
         host = self.args.host
         if shutil.which(host) is None:
@@ -689,6 +827,9 @@ class Installer:
 
         if self.args.action == "context":
             return self._context_policy()
+
+        if self.args.action == "agents":
+            return self._agent_policy()
 
         if self.args.action == "configure":
             editor = CodexConfigEditor(
@@ -756,7 +897,7 @@ class Installer:
             reset=self.args.action == "reset",
             include_template=bool(getattr(self.args, "include_template", False)),
         )
-        self._print_plan([plan], current, installed_versions, None, None)
+        self._print_plan([plan], current, installed_versions, None, None, None)
         if not self._confirm():
             print("Exit. No changes were made.")
             return 0
@@ -848,6 +989,26 @@ def build_parser() -> argparse.ArgumentParser:
             context_reset.add_argument("--yes", action="store_true")
             context_reset.add_argument("--dry-run", action="store_true")
             _add_bootstrap_passthrough(context_reset)
+            agents = actions.add_parser(
+                "agents",
+                help="set or reset only Codex agent execution overrides",
+            )
+            _add_bootstrap_passthrough(agents)
+            agent_actions = agents.add_subparsers(dest="agent_action")
+            agents_set = agent_actions.add_parser("set")
+            agents_set.add_argument(
+                "--max-concurrent",
+                type=int,
+                required=True,
+            )
+            agents_set.add_argument("--max-depth", type=int, required=True)
+            agents_set.add_argument("--yes", action="store_true")
+            agents_set.add_argument("--dry-run", action="store_true")
+            _add_bootstrap_passthrough(agents_set)
+            agents_reset = agent_actions.add_parser("reset")
+            agents_reset.add_argument("--yes", action="store_true")
+            agents_reset.add_argument("--dry-run", action="store_true")
+            _add_bootstrap_passthrough(agents_reset)
     return parser
 
 

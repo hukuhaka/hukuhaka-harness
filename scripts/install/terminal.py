@@ -26,6 +26,7 @@ class HostInstallPlan:
     include_template: bool = False
     configure_codex: bool = False
     change_context_window: bool = False
+    change_agent_policy: bool = False
 
 
 @dataclass
@@ -41,6 +42,8 @@ class _HostState:
     configure_codex: bool = False
     context_status: str = ""
     change_context_window: bool = False
+    agent_policy_status: str = ""
+    change_agent_policy: bool = False
 
 
 def csv_items(value: str) -> List[str]:
@@ -86,6 +89,7 @@ def _rows(states: Sequence[_HostState]) -> List[Tuple[str, int, int]]:
             rows.append(("settings-section", host_index, -1))
             rows.append(("configure", host_index, -1))
             rows.append(("context", host_index, -1))
+            rows.append(("agent-policy", host_index, -1))
         rows.append(("reset-section", host_index, -1))
         rows.append(("reset", host_index, -1))
         rows.append(("template", host_index, -1))
@@ -171,6 +175,14 @@ def _render(
                     state.context_status,
                 )
             )
+        elif kind == "agent-policy":
+            output.write(
+                "{}    [{}] Configure agent concurrency & nesting ({})\n".format(
+                    marker,
+                    "x" if state.change_agent_policy else " ",
+                    state.agent_policy_status,
+                )
+            )
         elif kind == "reset":
             output.write(
                 "{}    [{}] Reset managed components before install\n".format(
@@ -204,6 +216,7 @@ def prompt_install_plan(
             components=list(section["components"]),
             selected=set(section["selected"]),
             context_status=str(section.get("context_status", "")),
+            agent_policy_status=str(section.get("agent_policy_status", "")),
         )
         for section in sections
     ]
@@ -249,6 +262,7 @@ def prompt_install_plan(
                             include_template=state.include_template,
                             configure_codex=state.configure_codex,
                             change_context_window=state.change_context_window,
+                            change_agent_policy=state.change_agent_policy,
                         )
                         for state in states
                         if state.enabled
@@ -275,6 +289,8 @@ def prompt_install_plan(
                     state.configure_codex = not state.configure_codex
                 elif kind == "context" and state.enabled:
                     state.change_context_window = not state.change_context_window
+                elif kind == "agent-policy" and state.enabled:
+                    state.change_agent_policy = not state.change_agent_policy
                 elif kind == "reset" and state.enabled:
                     state.reset = not state.reset
                     if not state.reset:

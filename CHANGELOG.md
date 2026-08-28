@@ -7,6 +7,25 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.15] — 2026-08-28
+
+### Added
+
+- Added an explicit `codex agents set|reset` policy for agent concurrency and
+  V1 nesting depth, with the same ownership, drift protection, atomic backup,
+  Doctor validation, and interactive Settings integration as context policy.
+
+### Changed
+
+- Evidence Scout installation now enables multi-agent execution without
+  imposing a concurrency or nesting limit. Existing user-owned values remain
+  untouched; the exact ceiling owned by an older Evidence Scout install can be
+  adopted into the new agent policy.
+- Expanded the managed Codex `AGENTS.md` policy to re-check evidence when a
+  user challenges a claim and to prefer the in-app Browser for routine UI
+  verification, reserving Chrome DevTools for evidence the in-app Browser
+  cannot provide.
+
 ## [1.1.14] — 2026-08-24
 
 ### Fixed
