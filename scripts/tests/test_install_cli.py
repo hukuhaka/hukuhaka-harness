@@ -193,11 +193,11 @@ fi
         self.assertEqual(0, second.returncode, second.stderr)
         self.assertRegex(
             first.stdout,
-            r"hukuhaka-worklog +not installed → 0\.3\.0",
+            r"hukuhaka-worklog +not installed → 0\.4\.0",
         )
         self.assertRegex(
             second.stdout,
-            r"hukuhaka-worklog +0\.3\.0 \(same version\)",
+            r"hukuhaka-worklog +0\.4\.0 \(same version\)",
         )
         manifest_path = self.home / ".claude" / ".hukuhaka-manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -258,11 +258,11 @@ fi
         self.assertEqual(0, second.returncode, second.stderr)
         self.assertRegex(
             first.stdout,
-            r"hukuhaka-worklog +not installed → 0\.3\.0",
+            r"hukuhaka-worklog +not installed → 0\.4\.0",
         )
         self.assertRegex(
             second.stdout,
-            r"hukuhaka-worklog +0\.3\.0 \(same version\)",
+            r"hukuhaka-worklog +0\.4\.0 \(same version\)",
         )
         self.assertEqual(
             {

@@ -1,0 +1,30 @@
+{
+  "name": "hukuhaka-memory-audit",
+  "version": "0.1.0",
+  "description": "Audit Codex local memories for stale, duplicated, conflicting, or overly specific engineering context without editing generated memory files directly.",
+  "author": {
+    "name": "hukuhaka"
+  },
+  "repository": "https://github.com/hukuhaka/hukuhaka-harness",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "memory",
+    "audit",
+    "context",
+    "maintenance"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Hukuhaka Memory Audit",
+    "shortDescription": "Review stale or oversized Codex memory safely.",
+    "longDescription": "Measure Codex memory pressure, audit retained engineering context against current repository and runtime evidence, and propose approval-gated cleanup without treating generated memory files as an editable source of truth.",
+    "developerName": "hukuhaka",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Lifecycle hooks"
+    ],
+    "defaultPrompt": "Use $codex-memory-audit to audit Codex local memories for stale, duplicated, or overly specific engineering context."
+  }
+}

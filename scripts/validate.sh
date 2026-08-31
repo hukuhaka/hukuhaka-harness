@@ -259,6 +259,7 @@ fi
 CODEX_TESTS=(
     "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-broker.test.mjs"
     "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-hooks.test.mjs"
+    "$REPO_DIR/scripts/tests/contracts/hukuhaka-memory-audit-hooks.test.mjs"
     "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-prompting.test.mjs"
     "$REPO_DIR/scripts/tests/contracts/hukuhaka-codex-transfer.test.mjs"
 )
@@ -282,7 +283,7 @@ if [ "$codex_tests_present" -eq 0 ]; then
 elif [ "$codex_tests_present" -ne "${#CODEX_TESTS[@]}" ]; then
     fail "Codex runtime tests — incomplete private harness; missing: $codex_tests_missing"
 elif node --test "${CODEX_TESTS[@]}" > "$VALIDATE_TMP/codex-runtime-test.log" 2>&1; then
-    pass "broker lifecycle + prompting workflows + session transfer"
+    pass "broker lifecycle + prompting workflows + memory pressure + session transfer"
 else
     fail "Codex runtime tests — $(tail -3 "$VALIDATE_TMP/codex-runtime-test.log" | tr '\n' ' ')"
 fi

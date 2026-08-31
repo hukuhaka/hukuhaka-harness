@@ -7,6 +7,26 @@ Plugin versions (`marketplace/<plugin>/{.claude-plugin,.codex-plugin}/plugin.jso
 are independent from the repository version. Dual-host manifests share one
 plugin version.
 
+## [1.1.16] — 2026-08-31
+
+### Added
+
+- Added the optional Codex-only **`hukuhaka-memory-audit@0.1.0`** plugin. Its
+  `$codex-memory-audit` Skill verifies stale engineering context against current
+  sources before proposing approval-gated cleanup, and its trusted
+  `SessionStart` hook emits an English one-shot suggestion when the hot memory
+  summary or cold retrieval store crosses a review threshold.
+
+### Changed
+
+- Worklog lifecycle updates preserve existing notes and continue with
+  uncommitted records. Only unresolved conflicts in the affected item block
+  its update, and the completion report makes any recording failure explicit.
+- Updated **`hukuhaka-worklog@0.4.0`** to retain the newest 25 completed or
+  closed entries and run its deterministic archive operation automatically
+  after lifecycle closeout. The exact manual archive command remains available
+  for idempotent recovery and maintenance.
+
 ## [1.1.15] — 2026-08-28
 
 ### Added

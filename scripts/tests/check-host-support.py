@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 PLANNER = ROOT / "marketplace" / "hukuhaka-report-planner"
 WORKLOG = ROOT / "marketplace" / "hukuhaka-worklog"
+MEMORY_AUDIT = ROOT / "marketplace" / "hukuhaka-memory-audit"
 CATALOG = ROOT / "components.json"
 CLAUDE_MANIFEST = PLANNER / ".claude-plugin" / "plugin.json"
 CODEX_MANIFEST = PLANNER / ".codex-plugin" / "plugin.json"
@@ -24,6 +25,11 @@ WORKLOG_SKILL = WORKLOG / "skills" / "worklog" / "SKILL.md"
 WORKLOG_OPENAI = WORKLOG / "skills" / "worklog" / "agents" / "openai.yaml"
 WORKLOG_SCRIPT = WORKLOG / "skills" / "worklog" / "scripts" / "worklog.py"
 WORKLOG_HOOKS = WORKLOG / "hooks" / "claude-codex-hooks.json"
+MEMORY_AUDIT_MANIFEST = MEMORY_AUDIT / ".codex-plugin" / "plugin.json"
+MEMORY_AUDIT_SKILL = MEMORY_AUDIT / "skills" / "codex-memory-audit" / "SKILL.md"
+MEMORY_AUDIT_OPENAI = MEMORY_AUDIT / "skills" / "codex-memory-audit" / "agents" / "openai.yaml"
+MEMORY_AUDIT_HOOKS = MEMORY_AUDIT / "hooks" / "hooks.json"
+MEMORY_AUDIT_SCRIPT = MEMORY_AUDIT / "scripts" / "memory_pressure_hook.py"
 HOST_SUPPORT = ROOT / "docs" / "host-support.md"
 DESIGNER_SKILL = PLANNER / "skills" / "artifact-designer" / "SKILL.md"
 DESIGNER_AGENT = PLANNER / "agents" / "artifact-designer.md"
@@ -63,6 +69,11 @@ def main() -> int:
         WORKLOG_OPENAI,
         WORKLOG_SCRIPT,
         WORKLOG_HOOKS,
+        MEMORY_AUDIT_MANIFEST,
+        MEMORY_AUDIT_SKILL,
+        MEMORY_AUDIT_OPENAI,
+        MEMORY_AUDIT_HOOKS,
+        MEMORY_AUDIT_SCRIPT,
         DESIGNER_SKILL,
         DESIGNER_AGENT,
         BUILD_HANDOFF,
@@ -86,6 +97,11 @@ def main() -> int:
     worklog_openai = WORKLOG_OPENAI.read_text(encoding="utf-8")
     worklog_script = WORKLOG_SCRIPT.read_text(encoding="utf-8")
     worklog_hooks = load_json(WORKLOG_HOOKS)
+    memory_audit_manifest = load_json(MEMORY_AUDIT_MANIFEST)
+    memory_audit_skill = MEMORY_AUDIT_SKILL.read_text(encoding="utf-8")
+    memory_audit_openai = MEMORY_AUDIT_OPENAI.read_text(encoding="utf-8")
+    memory_audit_hooks = load_json(MEMORY_AUDIT_HOOKS)
+    memory_audit_script = MEMORY_AUDIT_SCRIPT.read_text(encoding="utf-8")
     host_support = HOST_SUPPORT.read_text(encoding="utf-8") if HOST_SUPPORT.is_file() else ""
     designer_skill = DESIGNER_SKILL.read_text(encoding="utf-8")
     designer_agent = DESIGNER_AGENT.read_text(encoding="utf-8")
@@ -110,8 +126,8 @@ def main() -> int:
             "worklog Claude manifest must expose the shared ./skills/ tree", errors)
     require(worklog_codex.get("skills") == "./skills/",
             "worklog Codex manifest must expose the shared ./skills/ tree", errors)
-    require(worklog_claude.get("version") == "0.3.0",
-            "worklog plugin version must be 0.3.0", errors)
+    require(worklog_claude.get("version") == "0.4.0",
+            "worklog plugin version must be 0.4.0", errors)
     require(worklog_claude.get("hooks") == "./hooks/claude-codex-hooks.json",
             "worklog Claude manifest must expose the mechanical hook", errors)
     require(worklog_codex.get("hooks") == "./hooks/claude-codex-hooks.json",
@@ -130,6 +146,19 @@ def main() -> int:
     require(catalog_check.returncode == 0, catalog_check.stderr.strip() or "component catalog validation failed", errors)
 
     components = {component["name"]: component for component in catalog.get("components", [])}
+    memory_component = components.get("hukuhaka-memory-audit", {})
+    require(memory_component.get("kind") == "plugin",
+            "memory audit must be catalogued as a plugin", errors)
+    require(memory_component.get("default") is False,
+            "memory audit must remain opt-in", errors)
+    require(set(memory_component.get("hosts", {})) == {"codex"},
+            "memory audit must be Codex-only", errors)
+    require(memory_audit_manifest.get("version") == "0.1.0",
+            "memory audit plugin version must be 0.1.0", errors)
+    require(memory_audit_manifest.get("skills") == "./skills/",
+            "memory audit manifest must expose its Skill", errors)
+    require("hooks" not in memory_audit_manifest,
+            "memory audit must use default hooks/hooks.json discovery", errors)
     scout_component = components.get("evidence-scout", {})
     require(scout_component.get("kind") == "agent",
             "evidence-scout must be catalogued as an agent", errors)
@@ -264,6 +293,64 @@ def main() -> int:
                 errors,
             )
 
+    memory_frontmatter = re.match(r"^---\n(.*?)\n---", memory_audit_skill, re.DOTALL)
+    require(memory_frontmatter is not None, "memory audit skill has no frontmatter", errors)
+    if memory_frontmatter:
+        require(
+            re.search(
+                r"^name:\s*codex-memory-audit\s*$",
+                memory_frontmatter.group(1),
+                re.MULTILINE,
+            ) is not None,
+            "memory audit skill name differs from its invocation",
+            errors,
+        )
+    for contract in (
+        "KEEP",
+        "CONDENSE",
+        "SUPERSEDE",
+        "DELETE",
+        "`UNRESOLVED` is a report status, not a memory classification",
+        "do not edit `memory_summary.md`",
+        "No memory changes have been applied.",
+    ):
+        require(contract in memory_audit_skill,
+                f"memory audit Skill contract is missing: {contract}", errors)
+    require("$codex-memory-audit" in memory_audit_openai,
+            "memory audit metadata lacks its canonical invocation", errors)
+
+    memory_hook_groups = memory_audit_hooks.get("hooks", {})
+    require(set(memory_hook_groups) == {"SessionStart"},
+            "memory audit must register only SessionStart", errors)
+    memory_hook_entries = memory_hook_groups.get("SessionStart", [])
+    require(len(memory_hook_entries) == 1,
+            "memory audit must register one SessionStart group", errors)
+    if len(memory_hook_entries) == 1:
+        require(memory_hook_entries[0].get("matcher") == "^(startup|resume)$",
+                "memory audit hook must match startup and resume only", errors)
+        memory_handlers = memory_hook_entries[0].get("hooks", [])
+        require(len(memory_handlers) == 1,
+                "memory audit must register one command handler", errors)
+        if len(memory_handlers) == 1:
+            require(
+                memory_handlers[0].get("command")
+                == 'python3 "${PLUGIN_ROOT}/scripts/memory_pressure_hook.py"',
+                "memory audit hook must invoke the bundled pressure script",
+                errors,
+            )
+    for contract in (
+        "25 * 1024",
+        "HOT_LINES = 200",
+        "1024 * 1024",
+        "COLD_ROLLOUT_FILES = 300",
+        'os.environ.get("PLUGIN_DATA")',
+        'os.environ.get("CODEX_HOME"',
+        "Codex memory pressure:",
+        "$codex-memory-audit",
+    ):
+        require(contract in memory_audit_script,
+                f"memory audit hook contract is missing: {contract}", errors)
+
     template_rules = (
         "For plans spanning multiple components or changing a contract",
         "The user’s latest explicit request defines the active scope",
@@ -335,6 +422,8 @@ def main() -> int:
             "README does not mark hukuhaka-worklog dual-host", errors)
     require("| Supported | Codex only |" in readme_row(readme, "Evidence Scout"),
             "README does not mark Evidence Scout Codex-only", errors)
+    require("| Supported | Codex only |" in readme_row(readme, "hukuhaka-memory-audit"),
+            "README does not mark memory audit Codex-only", errors)
 
     if errors:
         return report(errors)

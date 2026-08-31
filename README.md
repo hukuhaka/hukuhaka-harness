@@ -16,7 +16,8 @@ imply that a Claude Code plugin is portable to Codex.
 |-----------|---------|--------|-------|-------------------|
 | **hukuhaka-report-planner** | `0.6.0` | Supported | Claude Code, Codex | Frames and structures visual-document requests, directs source-backed anchor construction, and records a finalized `spec.md`. Explicit plan requests stop there; artifact requests delegate construction and visual verification to one designer subagent. |
 | **hukuhaka-engineering-plan** | `0.2.1` | Supported | Claude Code, Codex | Produces repository-grounded implementation plans with closed impact surfaces, exact change deltas, and requirement-to-verification mapping. |
-| **hukuhaka-worklog** | `0.3.0` | Supported | Claude Code, Codex | Reads current work at the first non-trivial project task, tracks lifecycle changes from natural requests, records completed or closed outcomes, and runs setup, status, and archive before model invocation. |
+| **hukuhaka-worklog** | `0.4.0` | Supported | Claude Code, Codex | Reads current work at the first non-trivial project task, tracks lifecycle changes from natural requests, records completed or closed outcomes, keeps the newest 25 history entries automatically, and runs setup, status, and recovery archive commands before model invocation. |
+| **hukuhaka-memory-audit** | `0.1.0` | Supported | Codex only | Audits local Codex memory against current engineering evidence and suggests cleanup once the always-loaded summary or supporting store crosses a review threshold. |
 | **hukuhaka-codex** | `0.4.1` | Supported | Claude Code only | Claude Code plugin that delegates planning, review, debate, and transfer work to the Codex runtime. It is not installed into Codex itself. |
 | **CLAUDE.md template** | — | Supported | Claude Code only | Shared scoped-change and verification policy with Claude-specific `spec.md` sign-off and attribution-free commits, deployed to `~/.claude/CLAUDE.md`. |
 | **AGENTS.md template** | — | Supported | Codex only | Codex policy for grounded responses to user challenges, scoped change previews, evidence-backed verification, compact-resilient task state, and a safe local Git lifecycle, merged into `$CODEX_HOME/AGENTS.md`. |
@@ -162,6 +163,7 @@ codex plugin marketplace add hukuhaka/hukuhaka-harness
 codex plugin add hukuhaka-report-planner@hukuhaka-harness
 codex plugin add hukuhaka-engineering-plan@hukuhaka-harness
 codex plugin add hukuhaka-worklog@hukuhaka-harness
+codex plugin add hukuhaka-memory-audit@hukuhaka-harness
 ```
 
 The native marketplace command follows the repository state selected by Codex
@@ -172,7 +174,9 @@ matching `vX.Y.Z` harness tag and restore the previous ref if an update fails.
 The Codex marketplace intentionally exposes only the components with native
 Codex packaging. Invoke the document planner as `$hukuhaka-report-planner`, the
 engineering planner as `$engineering-plan`, and the worklog as
-`$hukuhaka-worklog:worklog`, or let Codex select them from their descriptions.
+`$hukuhaka-worklog:worklog`. The optional memory audit uses
+`$codex-memory-audit`; it is available from the marketplace but is not selected
+by `--recommended`. Codex can otherwise select installed Skills from their descriptions.
 The `agents-md` template and Evidence Scout are installed by this repository's
 host-aware installer rather than the native plugin marketplace.
 
@@ -266,11 +270,20 @@ decision. Natural lifecycle changes invoke the model Skill automatically;
 analysis, implementation planning, routine one-off edits, and mechanical
 commands do not update lifecycle state. Missing files never block automatic
 use or get created by the model, while an explicit Worklog request directs the
-user to setup. Only the primary agent writes Worklog state, and pre-existing
-user changes leave it read-only. Setup creates the host-neutral
+user to setup. Only the primary agent writes Worklog state. Uncommitted,
+staged, or untracked records do not prevent updates: existing notes and
+unrelated entries are preserved, and only an item with a conflicting meaning
+or user intent is left unchanged. The lifecycle report states whether recording
+succeeded, needed no update, or was blocked and why. Setup creates the host-neutral
 `.hukuhaka/{work,changelog}.md` files and replaces only its managed block in the
 current host's project instruction file (`CLAUDE.md` or `AGENTS.md`). It never
 reads or migrates a legacy `backlog.md`.
+
+After a completion or closure, the Skill runs the bundled deterministic archive
+operation. It leaves `Recent` unchanged through 25 entries and moves older
+entries to monthly `changelog/YYYY-MM.md` files once the count exceeds 25. The
+exact `worklog archive` command remains available as an idempotent recovery or
+maintenance operation.
 
 After installing the Codex plugin, open `/hooks`, review the worklog hook, and
 trust it before using the mechanical commands. Codex skips untrusted plugin
@@ -281,6 +294,26 @@ instead of asking the Skill to emulate setup. See
 Compatibility alias: `$worklog <setup|status|archive>` remains accepted since
 `hukuhaka-worklog@0.2.2`, but generated instructions and documentation use the
 canonical plugin-qualified identity.
+
+## Codex memory audit
+
+`$codex-memory-audit` inspects the generated files under
+`${CODEX_HOME:-~/.codex}/memories/`, verifies drift-prone engineering claims
+against current source and runtime evidence, and proposes `KEEP`, `CONDENSE`,
+`SUPERSEDE`, or `DELETE` actions. It never hand-edits generated memory files.
+Cleanup remains pending until the user approves the exact proposal and a
+supported memory-management surface confirms the result.
+
+An optional `SessionStart` hook checks `startup` and `resume` without parsing
+memory semantics. It suggests the Skill when `memory_summary.md` reaches 25 KiB
+or 200 physical lines, or when `MEMORY.md` reaches 1 MiB or rollout summaries
+reach 300 files. The hook emits an English `systemMessage` once per pressure
+transition, writes only its suppression state under `PLUGIN_DATA`, and becomes
+eligible to warn again after memory returns below the thresholds.
+
+After installing the plugin, open `/hooks`, review the memory-pressure hook,
+and trust it if you want the optional suggestion. The Skill itself remains
+available even when the hook is untrusted or hooks are disabled.
 
 ## Design principles
 

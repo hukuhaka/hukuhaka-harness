@@ -164,7 +164,7 @@ class WorklogScriptTests(unittest.TestCase):
     def test_hook_status_and_archive_are_mechanical(self) -> None:
         WORKLOG.setup(self.root, "claude")
         changelog = self.root / ".hukuhaka" / "changelog.md"
-        entries = [history_entry(day, f"Entry {day}") for day in range(20, 8, -1)]
+        entries = [history_entry(day, f"Entry {day}") for day in range(31, 4, -1)]
         changelog.write_text(
             WORKLOG.CHANGELOG_TEMPLATE.rstrip() + "\n\n" + "\n\n".join(entries) + "\n",
             encoding="utf-8",
@@ -200,7 +200,7 @@ class WorklogScriptTests(unittest.TestCase):
         )
         response = json.loads(archive_output.getvalue())
         self.assertEqual("block", response["decision"])
-        self.assertIn("kept 10 in Recent; moved 2", response["reason"])
+        self.assertIn("kept 25 in Recent; moved 2", response["reason"])
         self.assertTrue(
             (self.root / ".hukuhaka" / "changelog" / "2026-07.md").is_file()
         )
@@ -314,33 +314,33 @@ class WorklogScriptTests(unittest.TestCase):
         self.assertIn("In Progress (1)", output.getvalue())
         self.assertIn("Planned (1)", output.getvalue())
         self.assertIn("On Hold (1)", output.getvalue())
-        self.assertIn("Recent history: 0/10", output.getvalue())
+        self.assertIn("Recent history: 0/25", output.getvalue())
 
-    def test_archive_keeps_ten_and_is_idempotent(self) -> None:
+    def test_archive_keeps_default_limit_and_is_idempotent(self) -> None:
         WORKLOG.setup(self.root, "claude")
         changelog = self.root / ".hukuhaka" / "changelog.md"
-        entries = [history_entry(day, f"Entry {day}") for day in range(20, 8, -1)]
+        entries = [history_entry(day, f"Entry {day}") for day in range(31, 4, -1)]
         changelog.write_text(
             WORKLOG.CHANGELOG_TEMPLATE.rstrip() + "\n\n" + "\n\n".join(entries) + "\n",
             encoding="utf-8",
         )
 
-        WORKLOG.archive_history(self.root, 10)
+        WORKLOG.archive_history(self.root)
         first_main = changelog.read_text(encoding="utf-8")
         archive = self.root / ".hukuhaka" / "changelog" / "2026-07.md"
         first_archive = archive.read_text(encoding="utf-8")
-        WORKLOG.archive_history(self.root, 10)
+        WORKLOG.archive_history(self.root)
 
-        self.assertEqual(10, len(WORKLOG.parse_history(first_main, changelog)[1]))
-        self.assertIn("Entry 10", first_archive)
-        self.assertIn("Entry 9", first_archive)
+        self.assertEqual(25, len(WORKLOG.parse_history(first_main, changelog)[1]))
+        self.assertIn("Entry 6", first_archive)
+        self.assertIn("Entry 5", first_archive)
         self.assertEqual(first_main, changelog.read_text(encoding="utf-8"))
         self.assertEqual(first_archive, archive.read_text(encoding="utf-8"))
 
     def test_archive_conflict_fails_before_recent_changes(self) -> None:
         WORKLOG.setup(self.root, "claude")
         changelog = self.root / ".hukuhaka" / "changelog.md"
-        entries = [history_entry(day, f"Entry {day}") for day in range(20, 9, -1)]
+        entries = [history_entry(day, f"Entry {day}") for day in range(31, 5, -1)]
         changelog.write_text(
             WORKLOG.CHANGELOG_TEMPLATE.rstrip() + "\n\n" + "\n\n".join(entries) + "\n",
             encoding="utf-8",
@@ -348,14 +348,14 @@ class WorklogScriptTests(unittest.TestCase):
         archive = self.root / ".hukuhaka" / "changelog" / "2026-07.md"
         archive.write_text(
             "# Changelog — 2026-07\n\n"
-            + history_entry(10, "Entry 10", "Conflicting result.")
+            + history_entry(6, "Entry 6", "Conflicting result.")
             + "\n",
             encoding="utf-8",
         )
         before = changelog.read_bytes()
 
         with self.assertRaises(WORKLOG.WorklogError):
-            WORKLOG.archive_history(self.root, 10)
+            WORKLOG.archive_history(self.root)
 
         self.assertEqual(before, changelog.read_bytes())
 
@@ -377,6 +377,30 @@ class WorklogScriptTests(unittest.TestCase):
         self.assertIn("conflicting archive entry", response["reason"])
         self.assertEqual(before, changelog.read_bytes())
 
+    def test_archive_refuses_symlinked_archive_directory(self) -> None:
+        WORKLOG.setup(self.root, "claude")
+        changelog = self.root / ".hukuhaka" / "changelog.md"
+        entries = [history_entry(day, f"Entry {day}") for day in range(31, 5, -1)]
+        changelog.write_text(
+            WORKLOG.CHANGELOG_TEMPLATE.rstrip()
+            + "\n\n"
+            + "\n\n".join(entries)
+            + "\n",
+            encoding="utf-8",
+        )
+        archive = self.root / ".hukuhaka" / "changelog"
+        archive.rmdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+        archive.symlink_to(outside, target_is_directory=True)
+        before = changelog.read_bytes()
+
+        with self.assertRaises(WORKLOG.WorklogError):
+            WORKLOG.archive_history(self.root)
+
+        self.assertEqual(before, changelog.read_bytes())
+        self.assertEqual([], list(outside.iterdir()))
+
 
 class WorklogPackageTests(unittest.TestCase):
     def test_dual_host_manifests_share_identity_and_version(self) -> None:
@@ -389,7 +413,7 @@ class WorklogPackageTests(unittest.TestCase):
         self.assertEqual("hukuhaka-worklog", claude["name"])
         self.assertEqual(claude["name"], codex["name"])
         self.assertEqual(claude["version"], codex["version"])
-        self.assertEqual("0.3.0", claude["version"])
+        self.assertEqual("0.4.0", claude["version"])
         self.assertEqual("./skills/", claude["skills"])
         self.assertEqual("./skills/", codex["skills"])
         self.assertEqual("./hooks/claude-codex-hooks.json", claude["hooks"])
@@ -402,7 +426,8 @@ class WorklogPackageTests(unittest.TestCase):
         self.assertNotIn("allowed-tools", header)
         self.assertIn(".hukuhaka/work.md", skill)
         self.assertIn("Use automatically when a project has .hukuhaka/work.md", skill)
-        self.assertIn("If either already has user changes", skill)
+        self.assertIn("Uncommitted, staged, or untracked status alone must not block", skill)
+        self.assertNotIn("If either already has user changes", skill)
         self.assertIn("Only the primary agent changes Worklog state", skill)
         self.assertIn("Never read, migrate, or write a legacy `backlog.md`", skill)
         self.assertNotIn("references/writing-guide.md", skill)

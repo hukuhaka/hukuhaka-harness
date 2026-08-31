@@ -48,6 +48,17 @@
       }
     },
     {
+      "name": "hukuhaka-memory-audit",
+      "kind": "plugin",
+      "lifecycle": "supported",
+      "default": false,
+      "hosts": {
+        "codex": {
+          "manifest": "marketplace/hukuhaka-memory-audit/.codex-plugin/plugin.json"
+        }
+      }
+    },
+    {
       "name": "hukuhaka-codex",
       "kind": "plugin",
       "lifecycle": "supported",

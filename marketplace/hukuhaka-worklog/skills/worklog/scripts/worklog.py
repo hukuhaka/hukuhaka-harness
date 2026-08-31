@@ -28,6 +28,7 @@ MONTH_RE = re.compile(r"^\d{4}-\d{2}\.md$")
 PLUGIN_NAME = "hukuhaka-worklog"
 SKILL_NAME = "worklog"
 COMMANDS = ("setup", "status", "archive")
+RECENT_LIMIT = 25
 CLAUDE_INVOCATION = f"/{PLUGIN_NAME}:{SKILL_NAME}"
 CODEX_INVOCATION = f"${PLUGIN_NAME}:{SKILL_NAME}"
 CODEX_LEGACY_INVOCATION = f"${SKILL_NAME}"
@@ -56,9 +57,9 @@ WORK_TEMPLATE = """# Work
 ## On Hold
 """
 
-CHANGELOG_TEMPLATE = """# Changelog
+CHANGELOG_TEMPLATE = f"""# Changelog
 
-> Recent completed and closed work. Newest first; keep at most 10 entries.
+> Recent completed and closed work. Newest first; keep at most {RECENT_LIMIT} entries.
 > Older entries live in `changelog/YYYY-MM.md`.
 
 ## Recent
@@ -286,13 +287,14 @@ def render_archive(month: str, entries: Iterable[HistoryEntry]) -> str:
     return f"# Changelog — {month}\n" + ("\n" + "\n\n".join(bodies) if bodies else "") + "\n"
 
 
-def archive_history(root: Path, keep: int) -> int:
+def archive_history(root: Path, keep: int = RECENT_LIMIT) -> int:
     if keep < 0:
         raise WorklogError("--keep must be zero or greater")
     _, changelog, archive_dir = worklog_paths(root)
     if not changelog.is_file():
         raise WorklogError(f"missing {changelog}; run worklog setup first")
     refuse_symlink(changelog)
+    refuse_symlink(archive_dir)
     prefix, entries = parse_history(changelog.read_text(encoding="utf-8"), changelog)
     moving = entries[keep:]
     if not moving:
@@ -353,7 +355,7 @@ def status(root: Path) -> int:
         print(f"\n{section} ({len(values)})")
         for value in values:
             print(f"- {value}")
-    print(f"\nRecent history: {len(recent)}/10")
+    print(f"\nRecent history: {len(recent)}/{RECENT_LIMIT}")
     print("Archives: " + (", ".join(months) if months else "none"))
     return 0
 
@@ -413,7 +415,7 @@ def run_hook(
             elif command == "status":
                 status(root)
             else:
-                archive_history(root, 10)
+                archive_history(root)
         reason = output.getvalue()
     except (OSError, UnicodeError, WorklogError) as exc:
         reason = f"worklog {command}: {exc}"
@@ -435,7 +437,7 @@ def build_parser() -> argparse.ArgumentParser:
     setup_parser.add_argument("--host", choices=("claude", "codex"), required=True)
     subparsers.add_parser("status")
     archive_parser = subparsers.add_parser("archive")
-    archive_parser.add_argument("--keep", type=int, default=10)
+    archive_parser.add_argument("--keep", type=int, default=RECENT_LIMIT)
     subparsers.add_parser("hook")
     return parser
 
